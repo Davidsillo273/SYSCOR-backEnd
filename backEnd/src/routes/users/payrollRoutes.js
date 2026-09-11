@@ -45,4 +45,82 @@ router.route("/").get(
     payrollController.getPayroll
 );
 
+// Va ANTES de "/employee/:id" para que Express no confunda "bonuses" con un
+// id de empleado.
+/**
+ * @swagger
+ * /users/payroll/bonuses:
+ *   get:
+ *     summary: Calcula la planilla de bonos de un período
+ *     description: >
+ *       Devuelve una fila por empleado con su nombre, puesto y el bono
+ *       asignado ese período. A propósito NO lleva AFP/ISSS/ISR: el bono es
+ *       un pago discrecional del dueño, no salario cotizable. Requiere el
+ *       permiso "payroll".
+ *     tags: [Usuarios - Planilla]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         required: false
+ *         schema: { type: string, example: "2026-09" }
+ *         description: Período en formato AAAA-MM. Por defecto, el mes en curso.
+ *       - in: query
+ *         name: status
+ *         required: false
+ *         schema: { type: string, example: "active" }
+ *         description: Estado laboral a incluir. Por defecto "active"; "all" incluye a todos.
+ *     responses:
+ *       200:
+ *         description: Planilla de bonos calculada del período.
+ *       403:
+ *         description: Sin el permiso "payroll".
+ *       500:
+ *         description: Error interno del servidor.
+ */
+router.route("/bonuses").get(
+    validateAuthCookie(["admin", "employee"]),
+    requirePermission("payroll"),
+    payrollController.getBonusPayroll
+);
+
+/**
+ * @swagger
+ * /users/payroll/employee/{id}:
+ *   get:
+ *     summary: Boleta de pago de un empleado
+ *     description: >
+ *       Devuelve la nómina individual (planilla general) de un empleado para
+ *       el período: sus datos, salario, deducciones de ley (AFP, ISSS, ISR) y
+ *       el neto a pagar. No incluye bonos (ver /users/payroll/bonuses).
+ *       Requiere el permiso "payroll".
+ *     tags: [Usuarios - Planilla]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *         description: ID del empleado.
+ *       - in: query
+ *         name: period
+ *         required: false
+ *         schema: { type: string, example: "2026-09" }
+ *         description: Período en formato AAAA-MM. Por defecto, el mes en curso.
+ *     responses:
+ *       200:
+ *         description: Boleta de pago del empleado.
+ *       403:
+ *         description: Sin el permiso "payroll".
+ *       404:
+ *         description: Empleado no encontrado.
+ */
+router.route("/employee/:id").get(
+    validateAuthCookie(["admin", "employee"]),
+    requirePermission("payroll"),
+    payrollController.getEmployeePayslip
+);
+
 export default router;
