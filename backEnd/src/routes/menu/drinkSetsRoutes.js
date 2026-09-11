@@ -1,12 +1,14 @@
 import express from "express";
 import drinkSetsController from "../../controllers/menu/drinkSetsController.js";
 import { validateAuthCookie } from "../../middlewares/auth/authMiddleware.js";
+import { requirePermission } from "../../middlewares/auth/permissionMiddleware.js";
 
 const router = express.Router();
 
 // Los conjuntos de bebidas son piezas para armar combos desde el panel de
-// administración: no hay ninguna pantalla de cliente/empleado que los use
-// directamente, así que todo queda restringido a admin.
+// administración. Tienen su propia pantalla (/drink-sets), así que van detrás
+// del permiso granular "drink_sets": el admin siempre pasa, y un empleado
+// solo si se le asignó ese permiso explícitamente.
 /**
  * @swagger
  * /menu/drink-sets:
@@ -52,8 +54,8 @@ const router = express.Router();
  */
 router
   .route("/")
-  .get(validateAuthCookie(["admin"]), drinkSetsController.getAllDrinkSets)
-  .post(validateAuthCookie(["admin"]), drinkSetsController.insertDrinkSet);
+  .get(validateAuthCookie(["admin", "employee"]), requirePermission("drink_sets"), drinkSetsController.getAllDrinkSets)
+  .post(validateAuthCookie(["admin", "employee"]), requirePermission("drink_sets"), drinkSetsController.insertDrinkSet);
 
 // Solo los activos, usados al armar un combo
 /**
@@ -72,7 +74,7 @@ router
  *       500:
  *         description: Error interno del servidor.
  */
-router.get("/active", validateAuthCookie(["admin"]), drinkSetsController.getActiveDrinkSets);
+router.get("/active", validateAuthCookie(["admin", "employee"]), requirePermission("drink_sets"), drinkSetsController.getActiveDrinkSets);
 
 /**
  * @swagger
@@ -96,7 +98,7 @@ router.get("/active", validateAuthCookie(["admin"]), drinkSetsController.getActi
  *       500:
  *         description: Error interno del servidor.
  */
-router.get("/check-name", validateAuthCookie(["admin"]), drinkSetsController.checkName);
+router.get("/check-name", validateAuthCookie(["admin", "employee"]), requirePermission("drink_sets"), drinkSetsController.checkName);
 
 // Deshabilitar/habilitar un conjunto (nunca se elimina)
 /**
@@ -122,7 +124,7 @@ router.get("/check-name", validateAuthCookie(["admin"]), drinkSetsController.che
  *       500:
  *         description: Error interno del servidor.
  */
-router.patch("/:id/toggle-status", validateAuthCookie(["admin"]), drinkSetsController.toggleDrinkSetStatus);
+router.patch("/:id/toggle-status", validateAuthCookie(["admin", "employee"]), requirePermission("drink_sets"), drinkSetsController.toggleDrinkSetStatus);
 
 /**
  * @swagger
@@ -163,6 +165,6 @@ router.patch("/:id/toggle-status", validateAuthCookie(["admin"]), drinkSetsContr
  *       500:
  *         description: Error interno del servidor.
  */
-router.route("/:id").patch(validateAuthCookie(["admin"]), drinkSetsController.updateDrinkSet);
+router.route("/:id").patch(validateAuthCookie(["admin", "employee"]), requirePermission("drink_sets"), drinkSetsController.updateDrinkSet);
 
 export default router;
