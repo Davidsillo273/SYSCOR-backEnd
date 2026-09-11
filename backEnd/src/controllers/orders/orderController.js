@@ -8,8 +8,17 @@ import TablesModel from "../../models/tables/tablesModel.js";
 import AdminModel from "../../models/users/adminModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
+import { resolvePeriodRange, buildDateMatch } from "../../utils/orders/periodUtils.js";
+// Tiempo real: cocina y el panel de pedidos reflejan cada comanda nueva o
+// cambio de estado al instante, sin recargar ni sondear.
+import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
+import notificationUtils from "../../utils/notifications/notificationUtils.js";
 
 const orderController = {};
+
+// Mismo público que ya define notificationUtils para la categoría "orders":
+// las comandas las ven el administrador y el personal.
+const ORDERS_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.orders;
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
@@ -29,6 +38,18 @@ const flagDelayedOrders = async () => {
       order.status = 'atrasado';
       order.statusHistory.push({ status: 'atrasado', changedAt: new Date() });
       await order.save();
+
+      // Este cambio no lo pidió nadie desde la interfaz: lo decide el propio
+      // servidor. Sin avisarlo por socket, el panel mostraría la comanda como
+      // "preparing" hasta que alguien recargara la pantalla.
+      const populated = await Order.findById(order._id)
+        .populate('table', 'number status')
+        .populate('waiter', 'name lastname')
+        .populate('customer', 'personalInfo');
+
+      if (populated) {
+        emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: populated.toObject() });
+      }
     }
   }
 };
@@ -174,6 +195,10 @@ orderController.createOrder = async (req, res) => {
       .populate('waiter', 'name lastname')
       .populate('customer', 'personalInfo');
 
+    // La comanda ya poblada es justo lo que muestra la pantalla de pedidos,
+    // así que el frontend puede insertarla directo sin pedir la lista entera.
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_CREATED, { order: populated.toObject() });
+
     return res.status(201).json({ message: "Order created", data: populated });
   } catch (error) {
     console.error("Error creating order:", error);
@@ -241,6 +266,8 @@ orderController.updateOrderStatus = async (req, res) => {
       await generateInvoice(order);
     }
 
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+
     return res.status(200).json({ message: "Order updated", data: order });
   } catch (error) {
     console.error("Error updating order:", error);
@@ -266,6 +293,8 @@ orderController.updatePaymentStatus = async (req, res) => {
      .populate('customer', 'personalInfo');
 
     if (!order) return res.status(404).json({ message: "Order not found" });
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+
     return res.status(200).json({ message: "Estado de pago actualizado", data: order });
   } catch (error) {
     console.error("Error updating payment status:", error);
@@ -308,6 +337,8 @@ orderController.cancelOrder = async (req, res) => {
      .populate('customer', 'personalInfo');
 
     if (!order) return res.status(404).json({ message: "Order not found" });
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+
     return res.status(200).json({ message: "Order cancelled", data: order });
   } catch (error) {
     console.error("Error cancelling order:", error);
@@ -320,6 +351,8 @@ orderController.deleteOrder = async (req, res) => {
   try {
     const order = await Order.findByIdAndDelete(req.params.id);
     if (!order) return res.status(404).json({ message: "Order not found" });
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_DELETED, { orderId: String(order._id) });
+
     return res.status(200).json({ message: "Order deleted" });
   } catch (error) {
     console.error("Error deleting order:", error);
@@ -332,29 +365,35 @@ orderController.deleteOrder = async (req, res) => {
 // con cuenta, los anota el mesero como texto libre).
 orderController.getCustomerLeaderboard = async (req, res) => {
   try {
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const startOfWeek = new Date(now);
-    const dow = startOfWeek.getDay();
-    startOfWeek.setDate(startOfWeek.getDate() - (dow === 0 ? 6 : dow - 1));
-    startOfWeek.setHours(0, 0, 0, 0);
+    // Las tres tarjetas usan el MISMO período (un solo selector en el
+    // frontend las controla a la vez), pero conservan valores por defecto
+    // distintos a propósito cuando no se manda ningún filtro explícito:
+    //   - "Más activos" seguía siendo sobre 7 días (period=week por defecto)
+    //   - "Mayor gasto" seguía siendo histórico completo (period=all)
+    //   - "Compras más caras" seguía siendo la semana en curso (period=week)
+    // Si el frontend manda un período explícito, ese gana en las tres.
+    const explicitPeriod = req.query.period || (req.query.from && req.query.to ? 'custom' : null);
+
+    const mostActiveRange = resolvePeriodRange({ ...req.query, period: explicitPeriod || 'week' });
+    const topSpendersRange = resolvePeriodRange({ ...req.query, period: explicitPeriod || 'all' });
+    const priciestWeekRange = resolvePeriodRange({ ...req.query, period: explicitPeriod || 'week' });
 
     const baseMatch = { orderType: 'online', status: 'delivered', customer: { $ne: null } };
 
     const [mostActiveRows, topSpendersRows, priciestWeekOrders] = await Promise.all([
       Order.aggregate([
-        { $match: { ...baseMatch, createdAt: { $gte: sevenDaysAgo } } },
+        { $match: { ...baseMatch, ...buildDateMatch(mostActiveRange) } },
         { $group: { _id: '$customer', orderCount: { $sum: 1 }, totalSpent: { $sum: '$total' } } },
         { $sort: { orderCount: -1, totalSpent: -1 } },
         { $limit: 10 },
       ]),
       Order.aggregate([
-        { $match: baseMatch },
+        { $match: { ...baseMatch, ...buildDateMatch(topSpendersRange) } },
         { $group: { _id: '$customer', orderCount: { $sum: 1 }, totalSpent: { $sum: '$total' } } },
         { $sort: { totalSpent: -1 } },
         { $limit: 10 },
       ]),
-      Order.find({ ...baseMatch, createdAt: { $gte: startOfWeek } })
+      Order.find({ ...baseMatch, ...buildDateMatch(priciestWeekRange) })
         .sort({ total: -1 })
         .limit(10)
         .populate('customer', 'personalInfo loginInfo.email')
@@ -381,6 +420,7 @@ orderController.getCustomerLeaderboard = async (req, res) => {
     ]);
 
     return res.status(200).json({
+      period: explicitPeriod || null,
       mostActive,
       topSpenders,
       priciestWeek: priciestWeekOrders.filter((o) => o.customer),
@@ -395,23 +435,15 @@ orderController.getCustomerLeaderboard = async (req, res) => {
 // filtrable por día/semana/mes.
 orderController.getEmployeeLeaderboard = async (req, res) => {
   try {
-    const period = ['day', 'month'].includes(req.query.period) ? req.query.period : 'week';
-    const now = new Date();
-    let start;
-    if (period === 'day') {
-      start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-    } else if (period === 'month') {
-      start = new Date(now.getFullYear(), now.getMonth(), 1);
-    } else {
-      start = new Date(now);
-      const dow = start.getDay();
-      start.setDate(start.getDate() - (dow === 0 ? 6 : dow - 1));
-      start.setHours(0, 0, 0, 0);
-    }
+    // Acepta day/week/month/year/all, o un rango personalizado (?from&to).
+    // Antes solo soportaba day/week/month a mano; ahora usa el mismo
+    // resolvedor que el ranking de clientes, para que un solo selector en el
+    // frontend sirva para las dos pantallas.
+    const range = resolvePeriodRange(req.query);
+    const dateMatch = buildDateMatch(range);
 
     const rows = await Order.aggregate([
-      { $match: { orderType: 'local', status: 'delivered', waiter: { $ne: null }, createdAt: { $gte: start } } },
+      { $match: { orderType: 'local', status: 'delivered', waiter: { $ne: null }, ...dateMatch } },
       { $group: { _id: '$waiter', orderCount: { $sum: 1 }, totalSales: { $sum: '$total' } } },
       { $sort: { totalSales: -1 } },
       { $limit: 10 },
@@ -429,7 +461,7 @@ orderController.getEmployeeLeaderboard = async (req, res) => {
       }))
       .filter((r) => r.employee);
 
-    return res.status(200).json({ period, topEmployees });
+    return res.status(200).json({ period: range.period, range: { start: range.start, end: range.end }, topEmployees });
   } catch (error) {
     console.error("Error en getEmployeeLeaderboard:", error);
     return res.status(500).json({ message: "Internal server error" });
