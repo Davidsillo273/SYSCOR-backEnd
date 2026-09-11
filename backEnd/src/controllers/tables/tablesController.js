@@ -5,6 +5,35 @@ import TablesModel from "../../models/tables/tablesModel.js";
 import Order from "../../models/orders/orderModel.js";
 // Utilidad para registrar los movimientos como notificaciones del sistema
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
+// Tiempo real: el panel de mesas se actualiza solo cuando una mesa se ocupa,
+// se desocupa o pasa a limpieza, sin recargar ni sondear cada 30 segundos.
+import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
+
+// Quiénes ven los cambios de mesas en vivo. Es el mismo público que ya define
+// notificationUtils para la categoría "tables", reutilizado a propósito para
+// no tener dos criterios distintos de "quién puede ver qué".
+const TABLES_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.tables;
+const ORDERS_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.orders;
+
+// Liberar u ordenar la limpieza de una mesa cancela sus comandas activas.
+// Ese cambio ocurre en la colección de pedidos, no en la de mesas, así que
+// hay que avisarlo por el canal de órdenes: si no, la pantalla de pedidos
+// seguiría mostrando comandas de una mesa que ya se desocupó.
+const emitCancelledOrdersOfTables = async (tableIds) => {
+  if (!tableIds || tableIds.length === 0) return;
+
+  const cancelledOrders = await Order.find({
+    table: { $in: tableIds },
+    status: 'cancelled',
+  })
+    .populate('table', 'number status')
+    .populate('waiter', 'name lastname')
+    .populate('customer', 'personalInfo');
+
+  for (const order of cancelledOrders) {
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+  }
+};
 
 // Obtiene todas las mesas registradas en el restaurante
 tablesController.getTables = async (req, res) => {
@@ -43,6 +72,8 @@ tablesController.insertTable = async (req, res) => {
       entity: { model: "Tables", id: newTable._id, label: `Mesa ${newTable.number}` },
     });
 
+    emitToRoles(TABLES_AUDIENCE, SOCKET_EVENTS.TABLE_CREATED, { table: newTable.toObject() });
+
     return res.status(201).json({ title: "Mesa agregada", message: "La mesa se guardó correctamente." });
   } catch (error) {
     console.error("tablesController.insertTable:", error);
@@ -70,6 +101,8 @@ tablesController.deleteTable = async (req, res) => {
       severity: "danger",
       entity: { model: "Tables", id: deletedTable._id, label: `Mesa ${deletedTable.number}` },
     });
+
+    emitToRoles(TABLES_AUDIENCE, SOCKET_EVENTS.TABLE_DELETED, { tableId: String(deletedTable._id) });
 
     return res.status(200).json({ title: "Mesa eliminada", message: "La mesa se eliminó correctamente." });
   } catch (error) {
@@ -106,6 +139,8 @@ tablesController.updateTable = async (req, res) => {
         { table: tableUpdated._id, status: { $in: ['pending', 'preparing', 'ready'] } },
         { $set: { status: 'cancelled' } }
       );
+
+      await emitCancelledOrdersOfTables([tableUpdated._id]);
     }
 
     // Notificación (tu lógica existente)
@@ -122,6 +157,10 @@ tablesController.updateTable = async (req, res) => {
       severity: "info",
       entity: { model: "Tables", id: tableUpdated._id, label: `Mesa ${tableUpdated.number}` },
     });
+
+    // Mandamos la mesa completa para que el frontend reemplace solo ese
+    // registro en su lista, sin volver a pedir todas las mesas.
+    emitToRoles(TABLES_AUDIENCE, SOCKET_EVENTS.TABLE_UPDATED, { table: tableUpdated.toObject() });
 
     return res.status(200).json({ message: "Mesa actualizada", data: tableUpdated });
   } catch (error) {
@@ -155,6 +194,8 @@ tablesController.bulkUpdateStatus = async (req, res) => {
           { table: { $in: tableIdsChanging }, status: { $in: ['pending', 'preparing', 'ready'] } },
           { $set: { status: 'cancelled' } }
         );
+
+        await emitCancelledOrdersOfTables(tableIdsChanging);
       }
     }
 
@@ -170,6 +211,10 @@ tablesController.bulkUpdateStatus = async (req, res) => {
       severity: "info",
       entity: { model: "Tables", id: null, label: "Todas las mesas" },
     });
+
+    // En el cambio masivo sí conviene que el frontend recargue: cambiaron
+    // todas las mesas y, posiblemente, muchas comandas a la vez.
+    emitToRoles(TABLES_AUDIENCE, SOCKET_EVENTS.TABLES_BULK_UPDATED, { status });
 
     return res.status(200).json({ title: "Mesas actualizadas", message: "Se actualizó el estado de todas las mesas.", data: { updated: tables.length } });
   } catch (error) {

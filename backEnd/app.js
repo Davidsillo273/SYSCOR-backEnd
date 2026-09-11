@@ -26,7 +26,11 @@ app.set("trust proxy", 1);
 
 // Orígenes permitidos por CORS. FRONTEND_URL admite varias URLs separadas por
 // coma (ej. producción y previews de Vercel) para no limitarnos a un solo dominio.
-const allowedOrigins = [
+// Se exporta porque Socket.IO (src/config/socket.js) necesita exactamente la
+// misma lista: si el tiempo real permitiera otros orígenes que la API, sería
+// una puerta trasera; y si permitiera menos, el panel conectaría a la API pero
+// no a los sockets.
+export const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
     ...(process.env.FRONTEND_URL?.split(",").map((url) => url.trim()) || []),

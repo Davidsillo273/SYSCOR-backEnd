@@ -5,6 +5,9 @@ import AdminModel from "../../models/users/adminModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
 import settingsUtils from "../settings/settingsUtils.js";
+// Capa de tiempo real: al guardar la notificación se avisa en el acto a las
+// sesiones que pueden verla, en vez de esperar a que el panel pregunte.
+import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 
 // Mismo mapeo que usa authMeController: según el rol sabemos en qué colección buscar al usuario
 const MODELS_BY_ROLE = {
@@ -137,6 +140,14 @@ const createNotification = async ({
         });
 
         await newNotification.save();
+
+        // Aviso instantáneo a la campana del panel. El destinatario es el
+        // mismo "audience" que acabamos de calcular, así que nadie recibe por
+        // socket algo que no vería al consultar el historial.
+        emitToRoles(newNotification.audience, SOCKET_EVENTS.NOTIFICATION_CREATED, {
+            notification: newNotification.toObject(),
+        });
+
         return newNotification;
     } catch (error) {
         console.error("notificationUtils.createNotification:", error);
