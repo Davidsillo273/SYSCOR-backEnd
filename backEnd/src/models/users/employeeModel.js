@@ -15,7 +15,48 @@ const employeeSchema = new mongoose.Schema(
       type: {
         type: String,
         required: true,
-        enum: ["kitchen", "waiter", "cashier", "manager", "cleaner", "other"],
+        enum: ["kitchen", "waiter", "cashier", "manager", "cleaner", "delivery", "other"],
+      },
+
+      // --- Datos extraídos del DUI al invitar (ver duiScanController) ---
+      // Se guardan porque son los que el DUI trae impresos y el admin ya no
+      // tiene que teclear: el sistema los lee de la foto y el admin solo los
+      // confirma/corrige antes de enviar la invitación.
+      birthDate: { type: Date, default: null },
+      gender: {
+        type: String,
+        enum: ["masculino", "femenino", null],
+        default: null,
+      },
+      maritalStatus: {
+        type: String,
+        enum: ["soltero", "casado", "divorciado", "viudo", "acompanado", null],
+        default: null,
+      },
+    },
+
+    // Documentos del expediente del empleado. Todos viven en Cloudinary
+    // (misma infra que las fotos del menú); acá solo se guarda la URL y el
+    // publicId, para poder borrarlos del almacenamiento si se reemplazan.
+    documents: {
+      // Foto del DUI por ambas caras: es de donde salieron los datos de
+      // arriba, así que se conserva como respaldo de lo que se capturó.
+      duiFront: {
+        url: { type: String, default: null },
+        publicId: { type: String, default: null },
+      },
+      duiBack: {
+        url: { type: String, default: null },
+        publicId: { type: String, default: null },
+      },
+      // Recibo de agua/luz a nombre del empleado
+      proofOfAddress: {
+        url: { type: String, default: null },
+        publicId: { type: String, default: null },
+      },
+      criminalRecord: {
+        url: { type: String, default: null },
+        publicId: { type: String, default: null },
       },
     },
     // Datos para ingresar al sistema
@@ -41,7 +82,33 @@ const employeeSchema = new mongoose.Schema(
       isss: { type: Number, default: 0 }, // Descuento de ISSS calculado (3%, tope $30)
       rent: { type: Number, default: 0 }, // Retención de ISR calculada según tabla de Hacienda
       salary: { type: Number, required: true }, // Sueldo base bruto
-      additionalPay: { type: Number, default: 0 }, // Bonos extras
+      additionalPay: { type: Number, default: 0 }, // Bonos extras (opcional)
+      // Hasta cuándo aplica el pago adicional. Un bono se pacta por un
+      // tiempo definido (15 días, 1, 2 o 3 meses), no para siempre: cuando
+      // esta fecha pasa, el bono deja de corresponder.
+      additionalPayDuration: {
+        type: String,
+        enum: ["15d", "1m", "2m", "3m", null],
+        default: null,
+      },
+      additionalPayEndsAt: { type: Date, default: null },
+
+      // --- Identificadores de ley ---
+      // Pueden quedar vacíos al invitar (no siempre se tienen a mano), y en
+      // ese caso la ficha del empleado queda marcada como incompleta —
+      // mismo criterio que los insumos "pendientes" de Inventario.
+      isssNumber: { type: String, default: null, trim: true }, // N.º de afiliación al ISSS
+      afpInstitution: {
+        type: String,
+        enum: ["confia", "crecer", "ipsfa", "inpep", null],
+        default: null,
+      },
+      afpNumber: { type: String, default: null, trim: true }, // NUP / n.º de afiliación a la AFP
+
+      // Cuenta donde se le deposita el salario
+      bankName: { type: String, default: null, trim: true },
+      bankAccount: { type: String, default: null, trim: true },
+
       isAuthorized: { type: Boolean, default: false },
       status: {
         type: String,
@@ -81,7 +148,37 @@ const employeeSchema = new mongoose.Schema(
       default: 0,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    // Los virtuales de abajo tienen que viajar en el JSON que consume el
+    // panel: es ahí donde se pinta el aviso de expediente incompleto.
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
+
+// Qué le falta al expediente del empleado. El ISSS y la AFP pueden quedar
+// vacíos al invitarlo (no siempre se tienen a mano ese día), pero el sistema
+// tiene que recordarlo: mismo criterio que los insumos "pendientes" de
+// Inventario, que se pueden crear a medias pero quedan marcados.
+employeeSchema.virtual("missingFields").get(function getMissingFields() {
+  const missing = [];
+  const work = this.workInfo || {};
+  const docs = this.documents || {};
+
+  if (!work.isssNumber) missing.push("Número de ISSS");
+  if (!work.afpInstitution) missing.push("Institución de AFP");
+  if (!work.afpNumber) missing.push("Número de AFP");
+  if (!work.bankName || !work.bankAccount) missing.push("Cuenta bancaria");
+  if (!docs.proofOfAddress?.url) missing.push("Comprobante de domicilio");
+  if (!docs.criminalRecord?.url) missing.push("Antecedentes penales");
+
+  return missing;
+});
+
+// Atajo para las pantallas: true si hay algo pendiente de completar.
+employeeSchema.virtual("hasMissingFields").get(function hasMissingFields() {
+  return this.missingFields.length > 0;
+});
 
 export default mongoose.model("Employee", employeeSchema);

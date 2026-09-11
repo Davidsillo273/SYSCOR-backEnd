@@ -11,6 +11,7 @@ import customerRoutes from "../users/customerRoutes.js";
 import employeeRoutes from "../users/employeeRoutes.js";
 import adminRoutes from "../users/adminRoutes.js";
 import payrollRoutes from "../users/payrollRoutes.js";
+import duiScanRoutes from "../users/duiScanRoutes.js";
 import wompiRoutes from "../orders/wompiRoutes.js"
 import tablesRoutes from "../tables/tablesRoutes.js"
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
@@ -75,6 +76,8 @@ router.use("/users/admins", adminRoutes);
 // Planilla: se calcula a partir de la ficha de los empleados, por eso vive
 // bajo /users, pero con su propio permiso ("payroll") por lo sensible del dato.
 router.use("/users/payroll", payrollRoutes);
+// Escaneo del DUI al invitar empleados (incluye la captura desde el celular)
+router.use("/users/dui-scan", duiScanRoutes);
 
 router.use("/inventory", inventoryRoutes);
 router.use("/tables", tablesRoutes);

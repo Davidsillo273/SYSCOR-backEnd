@@ -39,6 +39,9 @@ export const SOCKET_EVENTS = {
     TABLES_BULK_UPDATED: "table:bulk_updated",
     // Notificaciones del sistema (la campana del TopBar)
     NOTIFICATION_CREATED: "notification:created",
+    // Captura del DUI desde el celular: la PC está esperando a que las
+    // fotos lleguen del teléfono que escaneó el QR (ver duiScanController).
+    DUI_CAPTURE_UPLOADED: "dui:capture_uploaded",
 };
 
 /**

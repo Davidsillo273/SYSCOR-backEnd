@@ -30,11 +30,24 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
     type,
     salary,
     additionalPay,
+    additionalPayDuration,
     workInsurance,
     workDays,
     scheduleStart,
     scheduleEnd,
     permissions,
+    // Datos leídos del DUI (el admin ya los revisó y corrigió)
+    birthDate,
+    gender,
+    maritalStatus,
+    // Identificadores de ley: pueden venir vacíos a propósito, ver más abajo
+    isssNumber,
+    afpInstitution,
+    afpNumber,
+    bankName,
+    bankAccount,
+    // Documentos ya subidos a Cloudinary en pasos previos del asistente
+    documents,
   } = req.body;
 
   // Revisamos todos los campos antes de mandar nada: si algo falla, avisamos apenas ese primer error
@@ -58,6 +71,25 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
   }
 
   const { afp, isss, isr, netSalary } = calculatePayrollDeductions(salary);
+
+  // Un bono se pacta por un tiempo definido, no para siempre. Si el admin
+  // indicó una duración, se calcula desde ya la fecha en que deja de
+  // corresponder, para no tener que interpretarlo después en cada consulta.
+  const resolveAdditionalPayEnd = (duration) => {
+    if (!duration || !Number(additionalPay)) return null;
+
+    const end = new Date();
+    switch (duration) {
+      case "15d": end.setDate(end.getDate() + 15); break;
+      case "1m": end.setMonth(end.getMonth() + 1); break;
+      case "2m": end.setMonth(end.getMonth() + 2); break;
+      case "3m": end.setMonth(end.getMonth() + 3); break;
+      default: return null;
+    }
+    return end;
+  };
+
+  const additionalPayEndsAt = resolveAdditionalPayEnd(additionalPayDuration);
 
   try {
     const normalizedEmail = email.toLowerCase().trim();
@@ -83,17 +115,33 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
           duiNit: duiNit.trim(),
           address: address.trim(),
           type,
+          // Datos del DUI: van en el token para que el empleado no pueda
+          // alterarlos al completar su registro, igual que el salario.
+          birthDate: birthDate || null,
+          gender: gender || null,
+          maritalStatus: maritalStatus || null,
         },
+        documents: documents || {},
         workInfo: {
           salary: Number(salary),
           AFP: afp,
           isss,
           rent: isr,
           additionalPay: Number(additionalPay) || 0,
+          additionalPayDuration: additionalPayDuration || null,
+          additionalPayEndsAt,
           workInsurance: workInsurance === true || workInsurance === "true",
           workDays: Array.isArray(workDays) ? workDays : [],
           scheduleStart: scheduleStart || null,
           scheduleEnd: scheduleEnd || null,
+          // Pueden quedar vacíos: la ficha del empleado se marcará como
+          // incompleta (ver el virtual missingFields del modelo) hasta que
+          // alguien los complete.
+          isssNumber: isssNumber?.trim() || null,
+          afpInstitution: afpInstitution || null,
+          afpNumber: afpNumber?.trim() || null,
+          bankName: bankName?.trim() || null,
+          bankAccount: bankAccount?.trim() || null,
         },
         permissions: Array.isArray(permissions) ? permissions : [],
       },
@@ -222,7 +270,13 @@ inviteEmployeeController.acceptInvitation = async (req, res) => {
         phone: decoded.personalInfo.phone,
         image: imageUrl,
         type: decoded.personalInfo.type,
+        // Datos que salieron del DUI al invitarlo
+        birthDate: decoded.personalInfo.birthDate || null,
+        gender: decoded.personalInfo.gender || null,
+        maritalStatus: decoded.personalInfo.maritalStatus || null,
       },
+      // Fotos del DUI y demás documentos recopilados durante la invitación
+      documents: decoded.documents || {},
       loginInfo: {
         email: decoded.email,
         password: passwordHash,
@@ -236,10 +290,17 @@ inviteEmployeeController.acceptInvitation = async (req, res) => {
         isss: decoded.workInfo.isss,
         rent: decoded.workInfo.rent,
         additionalPay: decoded.workInfo.additionalPay,
+        additionalPayDuration: decoded.workInfo.additionalPayDuration || null,
+        additionalPayEndsAt: decoded.workInfo.additionalPayEndsAt || null,
         workInsurance: decoded.workInfo.workInsurance,
         workDays: decoded.workInfo.workDays || [],
         scheduleStart: decoded.workInfo.scheduleStart || null,
         scheduleEnd: decoded.workInfo.scheduleEnd || null,
+        isssNumber: decoded.workInfo.isssNumber || null,
+        afpInstitution: decoded.workInfo.afpInstitution || null,
+        afpNumber: decoded.workInfo.afpNumber || null,
+        bankName: decoded.workInfo.bankName || null,
+        bankAccount: decoded.workInfo.bankAccount || null,
         isAuthorized: true,
         status: "active",
       },
