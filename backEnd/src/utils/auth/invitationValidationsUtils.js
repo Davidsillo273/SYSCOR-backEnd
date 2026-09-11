@@ -11,7 +11,7 @@ const invitationValidationsUtils = {};
  * Solo aplica cuando se invita a un Employee, no a un Admin.
  */
 invitationValidationsUtils.validateEmployeeType = (type) => {
-    const validTypes = ["kitchen", "waiter", "cashier", "manager", "cleaner", "other"];
+    const validTypes = ["kitchen", "waiter", "cashier", "manager", "cleaner", "delivery", "other"];
     if (!type || !validTypes.includes(type)) {
         return {
             valid: false,

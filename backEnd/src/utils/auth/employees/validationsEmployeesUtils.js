@@ -49,7 +49,7 @@ const validateSalary = (salary) => {
   return { valid: true };
 };
 
-const VALID_EMPLOYEE_TYPES = ["kitchen", "waiter", "cashier", "manager", "cleaner", "other"];
+const VALID_EMPLOYEE_TYPES = ["kitchen", "waiter", "cashier", "manager", "cleaner", "delivery", "other"];
 
 const validateEmployeeType = (type) => {
   if (!type || !VALID_EMPLOYEE_TYPES.includes(type)) {

@@ -36,6 +36,7 @@ const EMPLOYEE_TYPE_LABELS = {
     cashier: "Cajero",
     manager: "Gerente",
     cleaner: "Limpieza",
+    delivery: "Repartidor",
     other: "Otro",
 };
 
