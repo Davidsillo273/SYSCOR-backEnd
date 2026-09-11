@@ -3,6 +3,7 @@ import customerController from "../../controllers/users/customerController.js";
 import { validateAuthCookie } from "../../middlewares/auth/authMiddleware.js";
 import { requirePermission } from "../../middlewares/auth/permissionMiddleware.js";
 import ownsResourceOrIsAdmin from "../../middlewares/auth/ownershipMiddleware.js";
+import upload from "../../utils/cloudinaryConfig.js";
 
 const router = express.Router();
 
@@ -67,6 +68,75 @@ router
      *       500:
      *         description: Error interno del servidor.
      */
-    .patch(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.updateCustomer)
+    .patch(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, upload.single("image"), customerController.updateCustomer)
+
+// Historial de pedidos del cliente, para su ficha en el panel. Mismo permiso
+// que ver la lista de clientes: quien puede ver la pantalla ve el detalle.
+/**
+ * @swagger
+ * /users/customers/{id}/orders:
+ *   get:
+ *     summary: Historial de pedidos de un cliente
+ *     description: Últimos 50 pedidos en línea del cliente, más un resumen (total gastado, pedidos entregados). Requiere el permiso "clients".
+ *     tags: [Usuarios - Clientes]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Historial y resumen del cliente.
+ *       403:
+ *         description: Sin el permiso "clients".
+ */
+router.route("/:id/orders").get(
+    validateAuthCookie(["admin", "employee"]),
+    requirePermission("clients"),
+    customerController.getCustomerOrders
+);
+
+// Dar de baja/alta a un cliente. Va detrás de su propio permiso de acción
+// ("clients_manage_status"), igual que pasa con los empleados: ver la
+// pantalla de clientes no debería bastar para cerrarle el acceso a alguien.
+/**
+ * @swagger
+ * /users/customers/{id}/status:
+ *   patch:
+ *     summary: Activa o desactiva la cuenta de un cliente
+ *     description: >
+ *       Un cliente desactivado no puede iniciar sesión, pero conserva su
+ *       historial de pedidos. Requiere el permiso "clients_manage_status".
+ *     tags: [Usuarios - Clientes]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status: { type: string, example: "inactive" }
+ *     responses:
+ *       200:
+ *         description: Estado actualizado.
+ *       403:
+ *         description: Sin el permiso "clients_manage_status".
+ *       404:
+ *         description: Cliente no encontrado.
+ */
+router.route("/:id/status").patch(
+    validateAuthCookie(["admin", "employee"]),
+    requirePermission("clients_manage_status"),
+    customerController.toggleStatus
+);
 
 export default router;

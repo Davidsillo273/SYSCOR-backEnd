@@ -19,7 +19,22 @@ const processLogin = async (Model, email, password, role) => {
         };
     }
 
-    // 2. Cuenta bloqueada actualmente por tiempo
+    // 2. Cuenta desactivada por un administrador.
+    // Solo los clientes tienen este campo (los empleados usan
+    // workInfo.status, que se valida en processLoginByAccessCode y en el
+    // middleware). Se comprueba ANTES de la contraseña porque un cliente
+    // dado de baja no debe poder entrar aunque la sepa; si el modelo no
+    // tiene "status", esta condición nunca se cumple y no afecta a nadie.
+    if (userFound.status === "inactive") {
+        return {
+            error: true,
+            status: 403,
+            title: "Cuenta desactivada",
+            message: "Tu cuenta está desactivada. Contacta al restaurante para reactivarla."
+        };
+    }
+
+    // 3. Cuenta bloqueada actualmente por tiempo
     if (userFound.loginInfo.timeOut && userFound.loginInfo.timeOut > Date.now()) {
         return {
             error: true,
@@ -31,7 +46,7 @@ const processLogin = async (Model, email, password, role) => {
 
     const isMatch = await bcrypt.compare(password, userFound.loginInfo.password);
 
-    // 3. Contraseña incorrecta e incremento de intentos
+    // 4. Contraseña incorrecta e incremento de intentos
     if (!isMatch) {
         userFound.loginInfo.loginAttempts = (userFound.loginInfo.loginAttempts || 0) + 1;
 

@@ -48,6 +48,16 @@ const customerSchema = new Schema(
       type: [{ type: Schema.Types.ObjectId, ref: "Products" }],
       default: [],
     },
+    // Estado de la cuenta del cliente. A diferencia de los empleados
+    // (workInfo.status, con varios estados laborales), aquí basta con
+    // activo/inactivo: desactivar es la forma de cerrarle el acceso a alguien
+    // sin borrar su historial de pedidos, que se necesita para la
+    // contabilidad y los rankings.
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+    },
   },
   {
     timestamps: true,
