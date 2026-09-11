@@ -10,6 +10,7 @@ import inventoryRoutes from "../inventory/inventoryRoutes.js";
 import customerRoutes from "../users/customerRoutes.js";
 import employeeRoutes from "../users/employeeRoutes.js";
 import adminRoutes from "../users/adminRoutes.js";
+import payrollRoutes from "../users/payrollRoutes.js";
 import wompiRoutes from "../orders/wompiRoutes.js"
 import tablesRoutes from "../tables/tablesRoutes.js"
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
@@ -18,6 +19,7 @@ import aiRoutes from "../ai/aiRoutes.js";
 import assistantChatRoutes from "../chat/assistantChatRoutes.js";
 import orderRoutes from "../orders/orderRoutes.js";
 import invoiceRoutes from "../orders/invoiceRoutes.js";
+import purchaseInvoiceRoutes from "../orders/purchaseInvoiceRoutes.js";
 
 
 
@@ -62,11 +64,17 @@ router.use("/orders/carts", cartRoutes);
 router.use("/orders", orderRoutes);
 router.use("/orders/wompi", wompiRoutes);
 router.use("/invoices", invoiceRoutes);
+// Facturas de COMPRA (las que suben desde los proveedores) y el reporte de
+// IVA que las cruza contra las ventas. Contabilidad, no operaciones.
+router.use("/purchase-invoices", purchaseInvoiceRoutes);
 
 // Usuarios administrativos: admins, empleados y clientes viven bajo /users
 router.use("/users/customers", customerRoutes);
 router.use("/users/employees", employeeRoutes);
 router.use("/users/admins", adminRoutes);
+// Planilla: se calcula a partir de la ficha de los empleados, por eso vive
+// bajo /users, pero con su propio permiso ("payroll") por lo sensible del dato.
+router.use("/users/payroll", payrollRoutes);
 
 router.use("/inventory", inventoryRoutes);
 router.use("/tables", tablesRoutes);
