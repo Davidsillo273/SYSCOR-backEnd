@@ -6,6 +6,7 @@ import drinksRouters from "../menu/drinksRoutes.js";
 import saucerRouters from "../menu/saucersRoutes.js";
 import combosRouters from "../menu/combosRoutes.js";
 import drinkSetsRouters from "../menu/drinkSetsRoutes.js";
+import promotionsRouters from "../menu/promotionsRoutes.js";
 import inventoryRoutes from "../inventory/inventoryRoutes.js";
 import customerRoutes from "../users/customerRoutes.js";
 import employeeRoutes from "../users/employeeRoutes.js";
@@ -18,6 +19,7 @@ import notificationsRoutes from "../notifications/notificationsRoutes.js";
 import settingsRoutes from "../settings/settingsRoutes.js";
 import aiRoutes from "../ai/aiRoutes.js";
 import assistantChatRoutes from "../chat/assistantChatRoutes.js";
+import loginHelpRoutes from "../chat/loginHelpRoutes.js";
 import orderRoutes from "../orders/orderRoutes.js";
 import invoiceRoutes from "../orders/invoiceRoutes.js";
 import purchaseInvoiceRoutes from "../orders/purchaseInvoiceRoutes.js";
@@ -57,6 +59,8 @@ router.use("/menu/drinks", drinksRouters);
 router.use("/menu/saucers", saucerRouters);
 router.use("/menu/combos", combosRouters);
 router.use("/menu/drink-sets", drinkSetsRouters);
+// Promociones de hoy: ofertas temporales que combinan productos del menú
+router.use("/menu/promotions", promotionsRouters);
 
 // Pedidos: carrito (borrador de compra), pedidos (comandas) y pagos viven bajo /orders.
 // La facturación (colección "invoices", generada automáticamente cuando un
@@ -85,6 +89,8 @@ router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/ai", aiRoutes);
 router.use("/chat", assistantChatRoutes);
+// Ayuda del login: pública, porque quien pregunta aún no tiene sesión.
+router.use("/chat", loginHelpRoutes);
 
 //auth - customers
 router.use("/auth/customers/register", registerCustomerRoutes);

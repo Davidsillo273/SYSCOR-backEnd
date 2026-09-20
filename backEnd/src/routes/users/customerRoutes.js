@@ -139,4 +139,145 @@ router.route("/:id/status").patch(
     customerController.toggleStatus
 );
 
+// Libreta de direcciones del cliente. Es su propio dato, así que la regla es
+// la misma que para editar su perfil: el dueño de la cuenta o un admin
+// (ownsResourceOrIsAdmin). La app móvil las usa para el delivery y para
+// mostrar la predeterminada en el encabezado del menú.
+/**
+ * @swagger
+ * /users/customers/{id}/addresses:
+ *   get:
+ *     summary: Lista las direcciones del cliente
+ *     description: El propio cliente o un admin. Devuelve la libreta completa y cuál es la predeterminada.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: "{ addresses, defaultAddress }"
+ *       403:
+ *         description: Se intentó ver la libreta de otra persona.
+ *       404:
+ *         description: Cliente no encontrado.
+ *   post:
+ *     summary: Agrega una dirección
+ *     description: El propio cliente o un admin. La primera dirección que se agrega queda como predeterminada automáticamente.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [tag, details]
+ *             properties:
+ *               tag: { type: string, example: "Casa" }
+ *               details: { type: string, example: "Col. Zacamil, pasaje 5, casa 12" }
+ *               isDefault: { type: boolean, example: true }
+ *     responses:
+ *       200:
+ *         description: Libreta actualizada.
+ *       400:
+ *         description: Nombre o dirección inválidos.
+ */
+router
+    .route("/:id/addresses")
+    .get(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.getAddresses)
+    .post(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.addAddress);
+
+/**
+ * @swagger
+ * /users/customers/{id}/addresses/{index}:
+ *   put:
+ *     summary: Edita una dirección
+ *     description: El propio cliente o un admin. Las direcciones se identifican por su posición en la lista, tal como vienen en el GET.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: index
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [tag, details]
+ *             properties:
+ *               tag: { type: string }
+ *               details: { type: string }
+ *               isDefault: { type: boolean }
+ *     responses:
+ *       200:
+ *         description: Libreta actualizada.
+ *       404:
+ *         description: La dirección ya no existe.
+ *   delete:
+ *     summary: Elimina una dirección
+ *     description: El propio cliente o un admin. Si se borra la predeterminada, la primera de las que quedan toma su lugar.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: index
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Libreta actualizada.
+ *       404:
+ *         description: La dirección ya no existe.
+ */
+router
+    .route("/:id/addresses/:index")
+    .put(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.updateAddress)
+    .delete(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.deleteAddress);
+
+/**
+ * @swagger
+ * /users/customers/{id}/addresses/{index}/default:
+ *   patch:
+ *     summary: Marca una dirección como predeterminada
+ *     description: El propio cliente o un admin. Deja esa como la de entrega y le quita la marca a las demás.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: index
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Libreta actualizada.
+ *       404:
+ *         description: La dirección ya no existe.
+ */
+router
+    .route("/:id/addresses/:index/default")
+    .patch(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.setDefaultAddress);
+
 export default router;

@@ -18,6 +18,7 @@ export const PERMISSIONS = [
   { id: "drink_sets", label: "Conjuntos de bebidas", group: "Pantallas", type: "screen" },
   { id: "dishes", label: "Platillos", group: "Pantallas", type: "screen" },
   { id: "extras", label: "Extras", group: "Pantallas", type: "screen" },
+  { id: "promotions", label: "Promociones de hoy", group: "Pantallas", type: "screen" },
   { id: "recipes", label: "Recetas", group: "Pantallas", type: "screen" },
 
   // --- Pantallas (Operaciones) ---

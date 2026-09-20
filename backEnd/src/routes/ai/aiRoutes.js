@@ -58,4 +58,30 @@ router.post("/suggest-recipe", validateAuthCookie(["admin"]), aiController.sugge
  */
 router.get("/stock-forecast", validateAuthCookie(["admin"]), aiController.stockForecast);
 
+/**
+ * @swagger
+ * /ai/suggest-promotion:
+ *   post:
+ *     summary: Sugiere promociones del día combinando productos del menú
+ *     description: Solo admin. La IA (Gemini) recibe el catálogo activo (platillos, bebidas y combos) y propone combinaciones con nombre, descripción, precio promocional y duración. Nunca inventa productos, ya que cualquier ID que devuelva y que no exista en el catálogo se descarta, y el precio suelto se recalcula en el backend. Es solo un punto de partida editable, no se guarda nada.
+ *     tags: [IA]
+ *     security:
+ *       - cookieAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               idea: { type: string, example: "algo para levantar las ventas de los martes" }
+ *               maxSuggestions: { type: number, example: 3, description: "Entre 1 y 5. Por defecto 3." }
+ *     responses:
+ *       200:
+ *         description: "{ suggestions: [{ name, description, items, originalPrice, price, discountPercent, durationDays }], maxDays }. Devuelve un arreglo vacío si la IA no respondió o si no hay productos activos (no se considera error)."
+ *       401:
+ *         description: No autenticado o rol distinto de admin.
+ */
+router.post("/suggest-promotion", validateAuthCookie(["admin"]), aiController.suggestPromotion);
+
 export default router;

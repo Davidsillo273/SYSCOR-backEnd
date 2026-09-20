@@ -172,4 +172,199 @@ customerController.getCustomerOrders = async (req, res) => {
     }
 };
 
+// ── DIRECCIONES DEL CLIENTE ──────────────────────────────────────────
+// El cliente arma su propia libreta de direcciones desde la app (la pantalla
+// de menú muestra la predeterminada en el encabezado, y el delivery necesita
+// saber a dónde llevar el pedido). Todas estas funciones van detrás de
+// ownsResourceOrIsAdmin, así que nadie puede tocar la libreta de otra persona.
+//
+// Las direcciones son un subdocumento sin _id propio (ver customerModel), así
+// que se identifican por su posición en el arreglo. Alcanza porque la lista es
+// corta y la app la vuelve a pedir completa después de cada cambio.
+
+// Valida el par tag/details que llega desde la app
+const validateAddressInput = ({ tag, details }) => {
+    if (!tag || typeof tag !== "string" || !tag.trim()) {
+        return { valid: false, message: "Ponle un nombre a la dirección (ej. Casa, Trabajo)." };
+    }
+    if (!details || typeof details !== "string" || details.trim().length < 5) {
+        return { valid: false, message: "La dirección debe tener al menos 5 caracteres." };
+    }
+    return { valid: true };
+};
+
+// Deja exactamente una dirección marcada como predeterminada. Si la lista
+// quedó sin ninguna (ej. se borró justo la que lo era), asciende a la primera:
+// mientras tenga direcciones, el cliente siempre tiene una de entrega.
+const ensureSingleDefault = (addresses, preferredIndex = null) => {
+    if (addresses.length === 0) return addresses;
+
+    const target =
+        preferredIndex !== null && addresses[preferredIndex]
+            ? preferredIndex
+            : addresses.findIndex((address) => address.isDefault);
+
+    const defaultIndex = target >= 0 ? target : 0;
+
+    addresses.forEach((address, index) => {
+        address.isDefault = index === defaultIndex;
+    });
+
+    return addresses;
+};
+
+// Respuesta común de todos los endpoints de direcciones: la libreta completa
+// más cuál es la predeterminada, para que la app no tenga que buscarla.
+const respondWithAddresses = (res, customer) => {
+    const addresses = (customer.personalInfo?.addresses || []).map((address, index) => ({
+        index,
+        tag: address.tag,
+        details: address.details,
+        isDefault: !!address.isDefault,
+    }));
+
+    return res.status(200).json({
+        addresses,
+        defaultAddress: addresses.find((address) => address.isDefault) || null,
+    });
+};
+
+customerController.getAddresses = async (req, res) => {
+    try {
+        const customer = await CustomerModel.findById(req.params.id).select("personalInfo.addresses");
+
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+
+        return respondWithAddresses(res, customer);
+    } catch (error) {
+        console.error("customerController.getAddresses:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudieron obtener las direcciones." });
+    }
+};
+
+customerController.addAddress = async (req, res) => {
+    try {
+        const { tag, details, isDefault } = req.body;
+
+        const validation = validateAddressInput({ tag, details });
+        if (!validation.valid) {
+            return res.status(400).json({ title: "Datos inválidos", message: validation.message });
+        }
+
+        const customer = await CustomerModel.findById(req.params.id).select("personalInfo.addresses");
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+
+        const addresses = customer.personalInfo.addresses || [];
+        addresses.push({ tag: tag.trim(), details: details.trim(), isDefault: false });
+
+        // La primera dirección que se agrega queda como predeterminada sí o sí:
+        // si no, la libreta existiría pero sin dirección de entrega.
+        const shouldBeDefault = addresses.length === 1 || isDefault === true || isDefault === "true";
+        ensureSingleDefault(addresses, shouldBeDefault ? addresses.length - 1 : null);
+
+        customer.personalInfo.addresses = addresses;
+        await customer.save();
+
+        return respondWithAddresses(res, customer);
+    } catch (error) {
+        console.error("customerController.addAddress:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo guardar la dirección." });
+    }
+};
+
+customerController.updateAddress = async (req, res) => {
+    try {
+        const { tag, details, isDefault } = req.body;
+        const index = Number(req.params.index);
+
+        const validation = validateAddressInput({ tag, details });
+        if (!validation.valid) {
+            return res.status(400).json({ title: "Datos inválidos", message: validation.message });
+        }
+
+        const customer = await CustomerModel.findById(req.params.id).select("personalInfo.addresses");
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+
+        const addresses = customer.personalInfo.addresses || [];
+        if (!Number.isInteger(index) || !addresses[index]) {
+            return res.status(404).json({ title: "Dirección no encontrada", message: "Esa dirección ya no existe." });
+        }
+
+        addresses[index].tag = tag.trim();
+        addresses[index].details = details.trim();
+
+        // Solo se mueve la predeterminada cuando se pide explícitamente:
+        // quitarle la marca a la actual sin dar otra dejaría al cliente sin ninguna.
+        ensureSingleDefault(addresses, isDefault === true || isDefault === "true" ? index : null);
+
+        customer.personalInfo.addresses = addresses;
+        await customer.save();
+
+        return respondWithAddresses(res, customer);
+    } catch (error) {
+        console.error("customerController.updateAddress:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo actualizar la dirección." });
+    }
+};
+
+customerController.setDefaultAddress = async (req, res) => {
+    try {
+        const index = Number(req.params.index);
+
+        const customer = await CustomerModel.findById(req.params.id).select("personalInfo.addresses");
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+
+        const addresses = customer.personalInfo.addresses || [];
+        if (!Number.isInteger(index) || !addresses[index]) {
+            return res.status(404).json({ title: "Dirección no encontrada", message: "Esa dirección ya no existe." });
+        }
+
+        ensureSingleDefault(addresses, index);
+
+        customer.personalInfo.addresses = addresses;
+        await customer.save();
+
+        return respondWithAddresses(res, customer);
+    } catch (error) {
+        console.error("customerController.setDefaultAddress:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo cambiar la dirección predeterminada." });
+    }
+};
+
+customerController.deleteAddress = async (req, res) => {
+    try {
+        const index = Number(req.params.index);
+
+        const customer = await CustomerModel.findById(req.params.id).select("personalInfo.addresses");
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+
+        const addresses = customer.personalInfo.addresses || [];
+        if (!Number.isInteger(index) || !addresses[index]) {
+            return res.status(404).json({ title: "Dirección no encontrada", message: "Esa dirección ya no existe." });
+        }
+
+        addresses.splice(index, 1);
+        // Si se borró la predeterminada, ensureSingleDefault asciende a la primera
+        ensureSingleDefault(addresses);
+
+        customer.personalInfo.addresses = addresses;
+        await customer.save();
+
+        return respondWithAddresses(res, customer);
+    } catch (error) {
+        console.error("customerController.deleteAddress:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo eliminar la dirección." });
+    }
+};
+
 export default customerController;
