@@ -7,6 +7,7 @@ import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import CartModel from "../../models/orders/cartModel.js";
 import { findByNameInsensitive } from "../../utils/common/duplicateNameUtils.js";
 import { cascadeDisableCombos } from "../../utils/menu/cascadeUtils.js";
+import { CATEGORIES_WITHOUT_SUBCATEGORY } from "../../utils/saucers/saucerCategoriesUtils.js";
 
 // Objeto para agrupar todas las funciones de los platillos
 const saucersController = {};
@@ -143,7 +144,7 @@ saucersController.insertSaucer = async (req, res) => {
       return res.status(400).json({message: validation.message,});
     }
 
-    const subcategoryApplies = !["Sopas", "Especiales"].includes(category);
+    const subcategoryApplies = !CATEGORIES_WITHOUT_SUBCATEGORY.includes(category);
 
     const newSaucer = new SaucersModel({
       name,
@@ -250,7 +251,7 @@ saucersController.updateSaucer = async (req, res) => {
 
     const saucerFound = await SaucersModel.findById(req.params.id);
 
-    const subcategoryApplies = !["Sopas", "Especiales"].includes(category);
+    const subcategoryApplies = !CATEGORIES_WITHOUT_SUBCATEGORY.includes(category);
 
     const updatedData = {
       name,

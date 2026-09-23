@@ -4,7 +4,7 @@ import { validateItemName, validateItemPrice } from "../common/duplicateNameUtil
 
 const validateName = validateItemName;
 
-const SAUCER_CATEGORIES = ["Burritos", "Tortas", "Tacos", "Sopas", "Especiales"];
+import { SAUCER_CATEGORIES } from "./saucerCategoriesUtils.js";
 
 const validateCategory = (category) => {
   if (!category || !SAUCER_CATEGORIES.includes(category)) {

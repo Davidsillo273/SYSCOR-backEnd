@@ -1,5 +1,6 @@
 import mongoose, {Schema, model} from "mongoose"
 import { UNIT_LIST } from "../../utils/units/unitsUtils.js"
+import { SAUCER_CATEGORIES } from "../../utils/saucers/saucerCategoriesUtils.js"
 
 // Definimos la estructura para los Platos principales (Saucers)
 const saucersSchema = new Schema({
@@ -8,11 +9,11 @@ const saucersSchema = new Schema({
     // Nombre del platillo
     name: { type: String },
     // Categoría fija del platillo
-    category: { type: String, enum: ["Burritos", "Tortas", "Tacos", "Sopas", "Especiales"] },
+    category: { type: String, enum: SAUCER_CATEGORIES },
     // Descripción libre del platillo
     description: { type: String },
     // Subcategoría de proteína (Al pastor, Pollo, Carne, Birria, etc.). No
-    // aplica a Sopas ni Especiales.
+    // aplica a las categorías de CATEGORIES_WITHOUT_SUBCATEGORY.
     subcategory: { type: String },
     // Cantidad de tacos por orden. Solo aplica cuando category es "Tacos": el
     // sistema detecta la categoría y muestra los botones 3/4/5 automáticamente.

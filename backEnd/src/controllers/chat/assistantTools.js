@@ -19,6 +19,7 @@ import Order from "../../models/orders/orderModel.js";
 import Invoice from "../../models/orders/invoiceModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
 import { findByNameInsensitive } from "../../utils/common/duplicateNameUtils.js";
+import { SAUCER_CATEGORIES } from "../../utils/saucers/saucerCategoriesUtils.js";
 
 const MENU_MODELS = {
   dish: { model: SaucersModel, label: "platillo", permission: "dishes" },
@@ -299,7 +300,7 @@ const createMenuItem = (type) => ({
         price: { type: "NUMBER", description: "Precio en USD, mayor a 0" },
         category:
           type === "dish"
-            ? { type: "STRING", enum: ["Burritos", "Tortas", "Tacos", "Sopas", "Especiales"] }
+            ? { type: "STRING", enum: SAUCER_CATEGORIES }
             : type === "drink"
             ? { type: "STRING", enum: ["casa", "tercero"], description: "'casa' se prepara en el local, 'tercero' viene embotellada" }
             : { type: "STRING", description: "Categoría libre" },
@@ -318,7 +319,7 @@ const createMenuItem = (type) => ({
           label: "Categoría",
           type: "select",
           required: true,
-          options: type === "dish" ? ["Burritos", "Tortas", "Tacos", "Sopas", "Especiales"] : ["casa", "tercero"],
+          options: type === "dish" ? SAUCER_CATEGORIES : ["casa", "tercero"],
         }]
       : []),
   ],

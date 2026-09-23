@@ -89,7 +89,7 @@ orderController.createOrder = async (req, res) => {
     const orderFields = { orderType };
 
     if (orderType === 'local') {
-      const { table, localCustomerName, paymentMethod } = req.body;
+      const { table, localCustomerName, paymentMethod, customer } = req.body;
       const waiter = req.user.id;
 
       if (!table) return res.status(400).json({ message: "La mesa es obligatoria en pedidos locales" });
@@ -105,6 +105,14 @@ orderController.createOrder = async (req, res) => {
       // Un pedido local solo admite pago con tarjeta o efectivo en caja
       if (paymentMethod && !['card', 'cash'].includes(paymentMethod)) {
         return res.status(400).json({ message: "El método de pago debe ser 'card' o 'cash' en pedidos locales" });
+      }
+
+      // Opcional: si el mesero liga la cuenta del cliente, el pedido local
+      // también le aparece en "Mis pedidos" de la app de clientes.
+      if (customer) {
+        const customerExists = await CustomerModel.exists({ _id: customer });
+        if (!customerExists) return res.status(404).json({ message: "Cliente no encontrado" });
+        orderFields.customer = customer;
       }
 
       orderFields.table = table;
@@ -230,6 +238,30 @@ orderController.getOrders = async (req, res) => {
     return res.status(200).json(orders);
   } catch (error) {
     console.error("Error fetching orders:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// Pedidos del cliente con sesión ("Mis pedidos" de la app de clientes).
+// Devuelve los de ambos tipos: los en línea siempre llevan `customer`, y los
+// locales solo cuando el mesero ligó la cuenta del cliente. El cliente sale
+// del token, nunca de la query, para que nadie pueda listar pedidos ajenos.
+// Tampoco se popula el mesero ni el cliente: la app no los necesita.
+orderController.getMyOrders = async (req, res) => {
+  try {
+    await flagDelayedOrders();
+
+    const filter = { customer: req.user.id };
+    if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
+
+    const orders = await Order.find(filter)
+      .select('orderType table isDelivery deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory createdAt updatedAt')
+      .populate('table', 'number')
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json(orders);
+  } catch (error) {
+    console.error("Error fetching customer orders:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };

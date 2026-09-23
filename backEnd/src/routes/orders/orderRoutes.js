@@ -94,6 +94,29 @@ router.get("/", validateAuthCookie(["employee", "admin"]), orderController.getOr
 
 /**
  * @swagger
+ * /orders/mine:
+ *   get:
+ *     summary: Pedidos del cliente con sesión
+ *     description: Solo cliente. Devuelve sus pedidos (en línea y locales ligados a su cuenta), del más reciente al más antiguo. El cliente se toma del token.
+ *     tags: [Pedidos]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: orderType
+ *         schema: { type: string, enum: [local, online] }
+ *         description: Filtra por tipo de pedido.
+ *     responses:
+ *       200:
+ *         description: Arreglo de pedidos del cliente (table populada con su número).
+ *       401:
+ *         description: No autenticado o rol sin permiso.
+ *       500:
+ *         description: Error interno del servidor.
+ */
+router.get("/mine", validateAuthCookie(["customer"]), orderController.getMyOrders);
+
+/**
+ * @swagger
  * /orders/{id}/status:
  *   put:
  *     summary: Cambia el estado de un pedido
