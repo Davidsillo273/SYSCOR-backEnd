@@ -5,6 +5,7 @@ import emailUtils from "../../../utils/auth/emailUtils.js";
 import utils from "../../../utils/auth/validationsUsersUtils.js";
 import customerUtils from "../../../utils/auth/customers/validationsCustomersUtils.js";
 import notificationUtils from "../../../utils/notifications/notificationUtils.js";
+import { normalizePhones } from "../../../utils/users/customerContactUtils.js";
 
 const registerCustomerController = {};
 
@@ -232,8 +233,8 @@ registerCustomerController.setPassword = async (req, res) => {
         image: personalInfo.image,
         birthdate: personalInfo.birthdate,
         addresses: personalInfo.addresses,
-        phones: personalInfo.phones,
-        cards: [], // las tarjetas se agregan después mediante el flujo de tokenización de Wompi
+        phones: normalizePhones(personalInfo.phones),
+        cards: [], // las tarjetas las agrega el cliente después, desde "Mis tarjetas"
       },
       loginInfo: {
         email,

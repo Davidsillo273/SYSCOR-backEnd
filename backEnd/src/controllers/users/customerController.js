@@ -5,6 +5,9 @@ import validationUtils from "../../utils/auth/validationsUsersUtils.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import Order from "../../models/orders/orderModel.js";
 import cloudinaryUtils from "../../utils/cloudinaryUtils.js";
+import customerValidations from "../../utils/auth/customers/validationsCustomersUtils.js";
+import contactUtils from "../../utils/users/customerContactUtils.js";
+import cardCryptoUtils from "../../utils/users/cardCryptoUtils.js";
 
 const customerController = {};
 
@@ -19,10 +22,10 @@ customerController.getCustomers = async (req, res) => {
     }
 };
 
-// Actualiza los datos de un cliente (nombre, apellidos o foto de perfil) y lo guarda en la base de datos
+// Actualiza los datos de un cliente (nombre, apellidos, fecha de nacimiento o foto de perfil) y lo guarda en la base de datos
 customerController.updateCustomer = async (req, res) => {
     try {
-        const { name, lastname } = req.body;
+        const { name, lastname, birthdate } = req.body;
         const updateData = {};
         const validationsToRun = [];
 
@@ -33,6 +36,15 @@ customerController.updateCustomer = async (req, res) => {
         if (lastname !== undefined) {
             validationsToRun.push(() => validationUtils.validateName(lastname, "El apellido"));
             updateData["personalInfo.lastname"] = lastname.trim();
+        }
+        // Llega como texto porque la ruta es multipart; "" la borra.
+        if (birthdate !== undefined) {
+            if (birthdate === "" || birthdate === null || birthdate === "null") {
+                updateData["personalInfo.birthdate"] = null;
+            } else {
+                validationsToRun.push(() => customerValidations.validateBirthdate(birthdate));
+                updateData["personalInfo.birthdate"] = new Date(birthdate);
+            }
         }
 
         // req.file lo agrega multer (la ruta lleva upload.single("image")).
@@ -364,6 +376,186 @@ customerController.deleteAddress = async (req, res) => {
     } catch (error) {
         console.error("customerController.deleteAddress:", error);
         return res.status(500).json({ title: "Error del servidor", message: "No se pudo eliminar la dirección." });
+    }
+};
+
+// ── TELÉFONOS DEL CLIENTE ────────────────────────────────────────────
+// Hasta 3 teléfonos, cada uno con su tipo (celular, fijo, trabajo, otro) y uno
+// marcado como predeterminado. La app edita la lista completa y la manda de
+// una vez, así que aquí solo hay lectura y reemplazo.
+
+customerController.getPhones = async (req, res) => {
+    try {
+        const customer = await CustomerModel.findById(req.params.id).select("personalInfo.phones");
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+        return res.status(200).json({ phones: contactUtils.normalizePhones(customer.personalInfo?.phones) });
+    } catch (error) {
+        console.error("customerController.getPhones:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudieron obtener los teléfonos." });
+    }
+};
+
+customerController.replacePhones = async (req, res) => {
+    try {
+        const { phones } = req.body;
+
+        const validation = contactUtils.validatePhoneList(phones);
+        if (!validation.valid) {
+            return res.status(400).json({ title: "Datos inválidos", message: validation.message });
+        }
+
+        const customer = await CustomerModel.findByIdAndUpdate(
+            req.params.id,
+            { $set: { "personalInfo.phones": contactUtils.normalizePhones(phones) } },
+            { new: true }
+        ).select("personalInfo.phones");
+
+        if (!customer) {
+            return res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+        }
+
+        return res.status(200).json({ phones: contactUtils.normalizePhones(customer.personalInfo?.phones) });
+    } catch (error) {
+        console.error("customerController.replacePhones:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudieron guardar los teléfonos." });
+    }
+};
+
+// ── TARJETAS GUARDADAS ───────────────────────────────────────────────
+// El cliente guarda sus tarjetas para no escribirlas en cada compra. Se
+// guarda el número cifrado (cardCryptoUtils), nunca el CVV, y a la app solo
+// vuelven la marca, los últimos 4 dígitos y el vencimiento. Igual que las
+// direcciones, se identifican por su posición en la lista.
+
+const respondWithCards = (res, customer, status = 200) =>
+    res.status(status).json({
+        cards: (customer.personalInfo?.cards || []).map(contactUtils.toPublicCard),
+    });
+
+const findCustomerCards = (id) => CustomerModel.findById(id).select("personalInfo.cards");
+
+const customerNotFound = (res) =>
+    res.status(404).json({ title: "Cliente no encontrado", message: "No se encontró la cuenta solicitada." });
+
+const cardNotFound = (res) =>
+    res.status(404).json({ title: "Tarjeta no encontrada", message: "Esa tarjeta ya no existe." });
+
+customerController.getCards = async (req, res) => {
+    try {
+        const customer = await findCustomerCards(req.params.id);
+        if (!customer) return customerNotFound(res);
+        return respondWithCards(res, customer);
+    } catch (error) {
+        console.error("customerController.getCards:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudieron obtener las tarjetas." });
+    }
+};
+
+customerController.addCard = async (req, res) => {
+    try {
+        // El CVV se ignora a propósito aunque la app lo mande.
+        const { cardHolder, cardNumber, expiryMonth, expiryYear, isDefault } = req.body;
+
+        const validation = contactUtils.validateCardInput({ cardHolder, cardNumber, expiryMonth, expiryYear });
+        if (!validation.valid) {
+            return res.status(400).json({ title: "Tarjeta inválida", message: validation.message });
+        }
+
+        const customer = await findCustomerCards(req.params.id);
+        if (!customer) return customerNotFound(res);
+
+        const cards = customer.personalInfo.cards || [];
+        if (cards.length >= contactUtils.MAX_CARDS) {
+            return res.status(400).json({
+                title: "Límite alcanzado",
+                message: `Puedes guardar hasta ${contactUtils.MAX_CARDS} tarjetas. Elimina una para agregar otra.`,
+            });
+        }
+
+        const { digits, month, year } = validation;
+        const lastFour = digits.slice(-4);
+
+        // Misma tarjeta ya guardada: se compara el número real, no solo los 4 finales.
+        const duplicated = cards.some((card) => {
+            if (card.lastFour !== lastFour) return false;
+            try {
+                return cardCryptoUtils.decrypt(card.token) === digits;
+            } catch {
+                return false;
+            }
+        });
+        if (duplicated) {
+            return res.status(409).json({ title: "Tarjeta repetida", message: "Esa tarjeta ya está guardada en tu cuenta." });
+        }
+
+        cards.push({
+            token: cardCryptoUtils.encrypt(digits),
+            lastFour,
+            brand: contactUtils.detectCardBrand(digits),
+            cardHolder: cardHolder.trim(),
+            expiryMonth: month,
+            expiryYear: year,
+            isDefault: false,
+        });
+
+        // La primera tarjeta queda como predeterminada sí o sí.
+        const shouldBeDefault = cards.length === 1 || isDefault === true || isDefault === "true";
+        contactUtils.ensureSingleDefault(cards, shouldBeDefault ? cards.length - 1 : null);
+
+        customer.personalInfo.cards = cards;
+        await customer.save();
+
+        return respondWithCards(res, customer, 201);
+    } catch (error) {
+        console.error("customerController.addCard:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo guardar la tarjeta." });
+    }
+};
+
+customerController.setDefaultCard = async (req, res) => {
+    try {
+        const index = Number(req.params.index);
+
+        const customer = await findCustomerCards(req.params.id);
+        if (!customer) return customerNotFound(res);
+
+        const cards = customer.personalInfo.cards || [];
+        if (!Number.isInteger(index) || !cards[index]) return cardNotFound(res);
+
+        contactUtils.ensureSingleDefault(cards, index);
+        customer.personalInfo.cards = cards;
+        await customer.save();
+
+        return respondWithCards(res, customer);
+    } catch (error) {
+        console.error("customerController.setDefaultCard:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo cambiar la tarjeta predeterminada." });
+    }
+};
+
+customerController.deleteCard = async (req, res) => {
+    try {
+        const index = Number(req.params.index);
+
+        const customer = await findCustomerCards(req.params.id);
+        if (!customer) return customerNotFound(res);
+
+        const cards = customer.personalInfo.cards || [];
+        if (!Number.isInteger(index) || !cards[index]) return cardNotFound(res);
+
+        cards.splice(index, 1);
+        // Si se borró la predeterminada, la primera de las que quedan toma su lugar
+        contactUtils.ensureSingleDefault(cards);
+
+        customer.personalInfo.cards = cards;
+        await customer.save();
+
+        return respondWithCards(res, customer);
+    } catch (error) {
+        console.error("customerController.deleteCard:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo eliminar la tarjeta." });
     }
 };
 

@@ -9,7 +9,7 @@ const router = express.Router();
  * /orders/wompi/token:
  *   post:
  *     summary: Genera un token de acceso a Wompi
- *     description: Cliente o admin. Paso previo necesario para poder pagar un carrito con Wompi; solicita el token de acceso a los servidores de Wompi usando las credenciales configuradas del negocio.
+ *     description: Solo admin (pruebas). Con este token se puede leer la configuración del comercio en Wompi, incluido su client secret, así que nunca se entrega a clientes. La app de clientes paga con /payments/checkout.
  *     tags: ["Pagos (Wompi)"]
  *     security:
  *       - cookieAuth: []
@@ -21,14 +21,15 @@ const router = express.Router();
  *       500:
  *         description: Error interno del servidor, o Wompi rechazó la solicitud (se reenvía el status/mensaje de Wompi).
  */
-router.route("/token").post(validateAuthCookie(["customer", "admin"]), wompiController.generateToken);
+// Solo admin: el token de Wompi da acceso a la cuenta del comercio.
+router.route("/token").post(validateAuthCookie(["admin"]), wompiController.generateToken);
 
 /**
  * @swagger
  * /orders/wompi/payment-test:
  *   post:
  *     summary: Procesa un pago con tarjeta a través de Wompi
- *     description: Cliente o admin. Envía el cobro a Wompi usando el token de tarjeta y, si es exitoso, marca el carrito indicado como "paid".
+ *     description: Solo admin (pruebas). Envía el cobro a Wompi usando el token de tarjeta y, si es exitoso, marca el carrito indicado como "paid". La app de clientes paga con /payments/checkout.
  *     tags: ["Pagos (Wompi)"]
  *     security:
  *       - cookieAuth: []
@@ -53,6 +54,6 @@ router.route("/token").post(validateAuthCookie(["customer", "admin"]), wompiCont
  *       500:
  *         description: Error interno del servidor, o Wompi rechazó la transacción (se reenvía el status/mensaje de Wompi).
  */
-router.route("/payment-test").post(validateAuthCookie(["customer", "admin"]), wompiController.paymentTest);
+router.route("/payment-test").post(validateAuthCookie(["admin"]), wompiController.paymentTest);
 
 export default router;

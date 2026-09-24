@@ -141,4 +141,17 @@ export const sendFunctionResult = async ({ history, functionName, result, system
   return { type: "text", text, history: [...contents, modelContent] };
 };
 
-export default { askGemini, handleChatWithTools, sendFunctionResult };
+// Una vuelta "cruda" con historial y herramientas: devuelve el contenido del
+// modelo tal cual (texto o una o varias function calls) o null si falló.
+// La usa Panchita (app de clientes), que encadena varias herramientas en un
+// mismo turno y guarda el historial en el servidor.
+export const generateWithTools = async ({ contents, tools = [], systemPrompt }) => {
+  const data = await callGeminiRaw({
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
+    ...(tools.length > 0 ? { tools: [{ functionDeclarations: tools }] } : {}),
+  });
+  return data?.candidates?.[0]?.content || null;
+};
+
+export default { askGemini, handleChatWithTools, sendFunctionResult, generateWithTools };

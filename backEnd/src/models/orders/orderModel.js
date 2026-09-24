@@ -6,7 +6,8 @@ import mongoose, { Schema, model } from "mongoose";
 const orderItemSchema = new Schema({
   itemType: {
     type: String,
-    enum: ['combo', 'extra', 'drink'],
+    // 'saucer' (platillo suelto) lo usan los pedidos que hace la app de clientes
+    enum: ['combo', 'extra', 'drink', 'saucer'],
     required: true
   },
   itemId: {
@@ -91,6 +92,32 @@ const orderSchema = new Schema({
     enum: ['pending', 'paid'],
     default: 'pending'
   },
+  // Propina del pedido en línea. Va aparte de `total` (que es solo lo
+  // consumido) para no inflar las ventas en los reportes.
+  tip: { type: Number, default: 0 },
+  // Cobro en línea con Wompi que originó este pedido (ver checkoutController).
+  payment: {
+    provider: { type: String },
+    transactionId: { type: String },
+    authorizationCode: { type: String },
+    amount: { type: Number },
+    // Parte del pedido pagada con saldo a favor (reclamos resueltos por Panchita)
+    creditApplied: { type: Number, default: 0 },
+    checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
+  },
+
+  // Mensajes del cliente para el repartidor (ej. "Déjalo en la recepción").
+  // Los manda desde la app, con un toque o escritos por él.
+  driverMessages: [
+    {
+      text: { type: String, maxlength: 200 },
+      preset: { type: Boolean, default: false },
+      createdAt: { type: Date, default: Date.now }
+    }
+  ],
+  // Última estimación de entrega que calculó Panchita (ver etaUtils). Se
+  // guarda para no consultar a Google en cada vistazo del cliente.
+  eta: { type: mongoose.Schema.Types.Mixed, default: null },
 
   // --- Campos compartidos por ambos tipos ---
   items: [orderItemSchema],

@@ -32,6 +32,8 @@ export const SOCKET_EVENTS = {
     ORDER_CREATED: "order:created",
     ORDER_UPDATED: "order:updated",
     ORDER_DELETED: "order:deleted",
+    // Mensaje del cliente para el repartidor (desde Panchita en la app)
+    ORDER_DRIVER_MESSAGE: "order:driver_message",
     // Mesas
     TABLE_CREATED: "table:created",
     TABLE_UPDATED: "table:updated",

@@ -14,6 +14,8 @@ import adminRoutes from "../users/adminRoutes.js";
 import payrollRoutes from "../users/payrollRoutes.js";
 import duiScanRoutes from "../users/duiScanRoutes.js";
 import wompiRoutes from "../orders/wompiRoutes.js"
+import checkoutRoutes from "../orders/checkoutRoutes.js";
+import panchitaRoutes from "../chat/panchitaRoutes.js";
 import tablesRoutes from "../tables/tablesRoutes.js"
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
 import settingsRoutes from "../settings/settingsRoutes.js";
@@ -68,6 +70,10 @@ router.use("/menu/promotions", promotionsRouters);
 router.use("/orders/carts", cartRoutes);
 router.use("/orders", orderRoutes);
 router.use("/orders/wompi", wompiRoutes);
+// Pago en línea de la app de clientes (Wompi 3DS). Crea el pedido al aprobarse.
+router.use("/payments", checkoutRoutes);
+// Chef Panchita en la app de clientes (seguimiento, reclamos, repartidor).
+router.use("/panchita", panchitaRoutes);
 router.use("/invoices", invoiceRoutes);
 // Facturas de COMPRA (las que suben desde los proveedores) y el reporte de
 // IVA que las cruza contra las ventas. Contabilidad, no operaciones.

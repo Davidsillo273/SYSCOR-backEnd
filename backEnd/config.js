@@ -16,6 +16,11 @@ export const config = {
     jwt: {
         secret: process.env.JWT_Secret_key
     },
+    // Clave para cifrar el número de las tarjetas que guardan los clientes
+    // (ver cardCryptoUtils). Si falta se usa la de JWT, solo para desarrollo
+    cards: {
+        encryptionKey: process.env.CARD_ENCRYPTION_KEY
+    },
     // Credenciales de Mailjet, el servicio con el que el sistema manda los
     // emails (códigos, invitaciones, etc.) vía su API HTTP. Reemplaza a
     // Nodemailer porque Render bloquea los puertos SMTP en producción
@@ -31,7 +36,9 @@ export const config = {
         cloudinaryApiKey: process.env.CLOUDINARY_API_KEY,
         cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET
     },
-    // Dirección donde vive nuestro propio backend
+    // Dirección pública de nuestro propio backend (sin /api), ej.
+    // https://syscor-mll9.onrender.com. Wompi redirige y manda el webhook de
+    // los pagos aquí, así que en producción es obligatoria
     appUrl: process.env.APP_URL,
     // Credenciales para conectarnos con Wompi, la pasarela que procesa los pagos
     wompi: {
@@ -47,6 +54,12 @@ export const config = {
     // Credenciales para pedirle ayuda a la IA (sugerir recetas, proyectar
     // cuándo se va a agotar un insumo). Si falta la clave, esas funciones
     // simplemente no responden nada: nunca frenan el resto del sistema
+    // Clave de Google Maps Platform para que Panchita estime la entrega de
+    // los pedidos (Geocoding, Routes con tráfico y Weather). Sin clave, la
+    // estimación usa distancia aproximada y horas pico, y no considera el clima
+    google: {
+        mapsApiKey: process.env.GOOGLE_MAPS_API_KEY
+    },
     gemini: {
         apiKey: process.env.GEMINI_API_KEY,
         // "gemini-2.5-flash-lite" ya no está disponible para proyectos nuevos

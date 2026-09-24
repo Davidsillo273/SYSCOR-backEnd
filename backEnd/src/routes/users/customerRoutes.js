@@ -280,4 +280,166 @@ router
     .route("/:id/addresses/:index/default")
     .patch(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.setDefaultAddress);
 
+// Teléfonos del cliente (hasta 3, con tipo y uno predeterminado). La app
+// manda la lista completa cada vez que el cliente la edita.
+/**
+ * @swagger
+ * /users/customers/{id}/phones:
+ *   get:
+ *     summary: Lista los teléfonos del cliente
+ *     description: El propio cliente o un admin.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: "{ phones: [{ number, type, isDefault }] }"
+ *   put:
+ *     summary: Reemplaza la lista de teléfonos
+ *     description: El propio cliente o un admin. Máximo 3; exactamente uno queda como predeterminado.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               phones:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     number: { type: string, example: "71234567" }
+ *                     type: { type: string, enum: [mobile, landline, work, other] }
+ *                     isDefault: { type: boolean }
+ *     responses:
+ *       200:
+ *         description: Lista actualizada.
+ *       400:
+ *         description: Más de 3 teléfonos, número o tipo inválido.
+ */
+router
+    .route("/:id/phones")
+    .get(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.getPhones)
+    .put(validateAuthCookie(["admin", "customer"]), ownsResourceOrIsAdmin, customerController.replacePhones);
+
+// Tarjetas guardadas del cliente. Solo el dueño de la cuenta: ni un admin
+// necesita ver (ni tocar) las tarjetas de otra persona.
+/**
+ * @swagger
+ * /users/customers/{id}/cards:
+ *   get:
+ *     summary: Lista las tarjetas guardadas
+ *     description: Solo el propio cliente. Nunca devuelve el número completo, solo marca, últimos 4 dígitos y vencimiento.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: "{ cards: [{ index, brand, lastFour, cardHolder, expiryMonth, expiryYear, isDefault }] }"
+ *   post:
+ *     summary: Guarda una tarjeta
+ *     description: Solo el propio cliente. El CVV no se recibe ni se guarda. Máximo 5 tarjetas.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [cardHolder, cardNumber, expiryMonth, expiryYear]
+ *             properties:
+ *               cardHolder: { type: string, example: "Juan Pérez" }
+ *               cardNumber: { type: string, example: "4111111111111111" }
+ *               expiryMonth: { type: integer, example: 8 }
+ *               expiryYear: { type: integer, example: 29 }
+ *               isDefault: { type: boolean }
+ *     responses:
+ *       201:
+ *         description: Tarjeta guardada; devuelve la lista.
+ *       400:
+ *         description: Datos inválidos o límite alcanzado.
+ *       409:
+ *         description: La tarjeta ya estaba guardada.
+ */
+router
+    .route("/:id/cards")
+    .get(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.getCards)
+    .post(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.addCard);
+
+/**
+ * @swagger
+ * /users/customers/{id}/cards/{index}:
+ *   delete:
+ *     summary: Elimina una tarjeta guardada
+ *     description: Solo el propio cliente. Si era la predeterminada, la primera de las que quedan toma su lugar.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: index
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Lista actualizada.
+ *       404:
+ *         description: La tarjeta ya no existe.
+ */
+router
+    .route("/:id/cards/:index")
+    .delete(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.deleteCard);
+
+/**
+ * @swagger
+ * /users/customers/{id}/cards/{index}/default:
+ *   patch:
+ *     summary: Marca una tarjeta como predeterminada
+ *     description: Solo el propio cliente.
+ *     tags: [Usuarios - Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: path
+ *         name: index
+ *         required: true
+ *         schema: { type: integer }
+ *     responses:
+ *       200:
+ *         description: Lista actualizada.
+ *       404:
+ *         description: La tarjeta ya no existe.
+ */
+router
+    .route("/:id/cards/:index/default")
+    .patch(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.setDefaultCard);
+
 export default router;

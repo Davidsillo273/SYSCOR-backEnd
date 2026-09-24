@@ -1,6 +1,7 @@
 import AdminModel from "../../models/users/adminModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
+import { normalizePhones } from "../../utils/users/customerContactUtils.js";
 
 const authMeController = {};
 
@@ -41,6 +42,11 @@ authMeController.getMe = async (req, res) => {
       personalInfo: role === "employee" ? user.personalInfo : undefined,
       workInfo: role === "employee" ? user.workInfo : undefined,
       permissions: role === "employee" ? user.permissions : undefined,
+      // Datos de contacto del cliente, para "Mi perfil" en la app
+      birthdate: role === "customer" ? user.personalInfo?.birthdate || null : undefined,
+      phones: role === "customer" ? normalizePhones(user.personalInfo?.phones) : undefined,
+      // Saldo a favor (reclamos resueltos por Panchita), usable al pagar
+      walletBalance: role === "customer" ? user.wallet?.balance || 0 : undefined,
     });
   } catch (error) {
     console.error("authMeController.getMe:", error);

@@ -3,10 +3,14 @@ import mongoose, { Schema, model } from "mongoose";
 // Sub-esquema para guardar las tarjetas de pago del cliente
 const cardSchema = new Schema(
   {
-    token: { type: String, required: true }, // Token seguro del banco
+    // Número de la tarjeta cifrado (ver cardCryptoUtils). Nunca sale del servidor.
+    // El CVV no se guarda: el cliente lo escribe en cada compra.
+    token: { type: String, required: true },
     lastFour: { type: String, required: true, maxlength: 4 }, // Últimos 4 dígitos para mostrar
     brand: { type: String, required: true, enum: ["VISA", "MASTERCARD", "AMEX", "DINERS", "OTHER"] },
     cardHolder: { type: String, required: true },
+    expiryMonth: { type: Number, min: 1, max: 12 },
+    expiryYear: { type: Number, min: 0, max: 99 }, // Dos dígitos, como viene impreso
     isDefault: { type: Boolean, default: false }, // ¿Es su tarjeta principal?
   },
   { _id: false }, // No necesitamos un ID interno para cada tarjeta
@@ -32,7 +36,10 @@ const customerSchema = new Schema(
       image: { type: String, default: null },
       birthdate: { type: Date, default: null },
       addresses: { type: [addressSchema], default: [] }, // Lista de direcciones
-      phones: { type: [String], default: [] },
+      // Hasta 3 teléfonos: { number, type: "mobile" | "landline" | "work" | "other", isDefault }.
+      // Es Mixed porque los clientes antiguos los tienen guardados como texto
+      // plano; customerContactUtils.normalizePhones los lleva a la forma nueva.
+      phones: { type: [Schema.Types.Mixed], default: [] },
       cards: { type: [cardSchema], default: [] }, // Lista de tarjetas guardadas
     },
     // Credenciales para iniciar sesión
@@ -42,6 +49,11 @@ const customerSchema = new Schema(
       isVerified: { type: Boolean, default: false },
       loginAttempts: { type: Number, default: 0 },
       timeOut: { type: Date, default: null },
+    },
+    // Saldo a favor: lo abona Panchita al resolver un reclamo y se usa en el
+    // pago de los siguientes pedidos (ver claimPolicy y checkoutController).
+    wallet: {
+      balance: { type: Number, default: 0, min: 0 },
     },
     // Productos favoritos del menú
     favorites: {
