@@ -18,13 +18,13 @@ import Drinks from "../../models/menu/drinksModel.js";
 import Extras from "../../models/menu/extrasModel.js";
 import Saucers from "../../models/menu/saucersModel.js";
 import { config } from "../../../config.js";
-import wompiClient from "../../utils/payments/wompiClient.js";
+import wompiClient, { WompiError } from "../../utils/payments/wompiClient.js";
 import cardCryptoUtils from "../../utils/users/cardCryptoUtils.js";
 import contactUtils, { normalizePhones } from "../../utils/users/customerContactUtils.js";
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTargetsUtils.js";
-import { includedDrinksOf, drinkSurchargeFor } from "../../utils/drinks/drinkUpgradeUtils.js";
+import { includedDrinksOf, drinkSurchargeFor, HOUSE_DRINK_CATEGORY } from "../../utils/drinks/drinkUpgradeUtils.js";
 
 const checkoutController = {};
 
@@ -47,8 +47,8 @@ const apiPrefix = () => (process.env.API_URL || "/api").replace(/\/+$/, "");
 // Convierte el carrito de la app en líneas de pedido con precios del servidor.
 // Los extras van como líneas propias (así cocina los ve y el total cuadra);
 // salsas, bebida del combo, opciones elegidas e ingredientes quitados van en
-// las notas. Si el cliente cambió la bebida del combo por otra que no viene
-// incluida, la diferencia se suma al precio de la línea del combo.
+// las notas. Si el cliente cambió la bebida del combo por una de la casa que
+// no viene incluida, la diferencia se suma al precio de la línea del combo.
 const buildItems = async (cartItems) => {
     if (!Array.isArray(cartItems) || cartItems.length === 0) {
         return { error: "Tu carrito está vacío." };
@@ -90,8 +90,8 @@ const buildItems = async (cartItems) => {
                 const included = includedDrinksOf(product);
                 const isIncluded = included.some((d) => String(d._id) === String(drink._id));
                 if (!isIncluded) {
-                    // Fuera de las incluidas se acepta cualquier bebida activa, con recargo.
-                    if (!isActive(drink) || included.length === 0) {
+                    // Fuera de las incluidas solo se aceptan las de la casa, con recargo.
+                    if (drink.category !== HOUSE_DRINK_CATEGORY || !isActive(drink) || included.length === 0) {
                         return { error: `${drink.name} no se puede elegir en ${product.name}. Cambia la bebida.` };
                     }
                     drinkSurcharge = drinkSurchargeFor(included, drink);
@@ -358,6 +358,36 @@ const settleCheckout = async (checkout, { final = false } = {}) => {
     return checkout;
 };
 
+// Lo que dice Wompi cuando rechaza un cobro (el formato cambia según el error).
+const wompiRejectionText = (data) => {
+    if (!data || typeof data !== "object") return "";
+    const list = Array.isArray(data.mensajes) ? data.mensajes : [];
+    return String(data.mensaje || data.message || list.join(" ") || data.title || "").slice(0, 200);
+};
+
+// Motivo que ve el cliente cuando el cobro no se pudo ni empezar. Sin datos
+// sensibles, pero lo bastante claro para saber dónde buscar.
+const describeStartError = (error) => {
+    if (error instanceof WompiError) {
+        if (error.code === "WOMPI_UNREACHABLE") {
+            return { status: 504, title: "Pagos sin respuesta", message: "El servicio de pagos no respondió. Intenta de nuevo en un momento." };
+        }
+        return {
+            status: 503,
+            title: "Pagos en línea no disponibles",
+            message: `El restaurante tiene un problema con su cuenta de pagos. Intenta más tarde. (${error.code})`,
+        };
+    }
+    if (/CARD_ENCRYPTION_KEY/.test(error?.message || "")) {
+        return { status: 503, title: "Pagos en línea no disponibles", message: "Falta configurar el cifrado de tarjetas en el servidor. (CARD_KEY)" };
+    }
+    if (error?.name === "ValidationError") {
+        const fields = Object.keys(error.errors || {}).slice(0, 3).join(", ") || "VALIDATION";
+        return { status: 500, title: "No se pudo iniciar el pago", message: `El pedido no se pudo guardar. (${fields})` };
+    }
+    return { status: 500, title: "No se pudo iniciar el pago", message: `Error inesperado del servidor. (${error?.name || "ERROR"})` };
+};
+
 // POST /payments/checkout
 checkoutController.createCheckout = async (req, res) => {
     try {
@@ -420,7 +450,18 @@ checkoutController.createCheckout = async (req, res) => {
         const defaultAddress = (info.addresses || []).find((a) => a.isDefault)?.details;
         const base = publicBaseUrl(req);
 
-        const { ok, data } = await wompiClient.createTransaction3DS({
+        // Si el cobro no arranca, queda en error y se devuelve el saldo apartado.
+        const failCheckout = async (message) => {
+            checkout.status = "error";
+            checkout.wompi = { message };
+            checkout.pendingCard = undefined;
+            await checkout.save();
+            await releaseCredit(checkout);
+        };
+
+        let wompiResponse;
+        try {
+            wompiResponse = await wompiClient.createTransaction3DS({
             monto: chargeAmount,
             email: customer.loginInfo?.email,
             nombre: info.name,
@@ -438,18 +479,24 @@ checkoutController.createCheckout = async (req, res) => {
                 notificarTransaccionCliente: true,
             },
             datosAdicionales: { checkoutId: String(checkout._id) },
-        });
+            });
+        } catch (error) {
+            console.error("checkoutController.createCheckout: Wompi", error);
+            await failCheckout(error.message);
+            const described = describeStartError(error);
+            return res.status(described.status).json({ title: described.title, message: described.message });
+        }
+        const { ok, status, data } = wompiResponse;
 
         if (!ok || !data?.urlCompletarPago3Ds || !data?.idTransaccion) {
-            checkout.status = "error";
-            checkout.wompi = { message: data?.mensaje || data?.message || "Wompi no aceptó el cobro." };
-            checkout.pendingCard = undefined;
-            await checkout.save();
-            await releaseCredit(checkout);
-            console.error("checkoutController.createCheckout: Wompi", JSON.stringify(data).slice(0, 500));
+            const reason = wompiRejectionText(data);
+            await failCheckout(reason || "Wompi no aceptó el cobro.");
+            console.error("checkoutController.createCheckout: Wompi", status, JSON.stringify(data).slice(0, 500));
             return res.status(502).json({
                 title: "No se pudo iniciar el pago",
-                message: "Revisa los datos de tu tarjeta o intenta con otra.",
+                message: reason
+                    ? `Wompi no aceptó el cobro: ${reason}`
+                    : `Wompi no aceptó el cobro (${status}). Revisa los datos de tu tarjeta o intenta con otra.`,
             });
         }
 
@@ -464,7 +511,8 @@ checkoutController.createCheckout = async (req, res) => {
         });
     } catch (error) {
         console.error("checkoutController.createCheckout:", error);
-        return res.status(500).json({ title: "Error del servidor", message: "No se pudo iniciar el pago." });
+        const described = describeStartError(error);
+        return res.status(described.status).json({ title: described.title, message: described.message });
     }
 };
 

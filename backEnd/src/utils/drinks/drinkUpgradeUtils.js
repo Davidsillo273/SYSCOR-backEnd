@@ -1,8 +1,8 @@
 // Cambio de bebida dentro de un combo.
 //
-// Un combo incluye sin costo las bebidas de su política (conjuntos + bebidas
-// sueltas). El cliente también puede cambiarla por cualquier otra bebida
-// activa del menú (de la casa o embotellada) pagando la diferencia:
+// Un combo incluye sin costo las bebidas que el admin eligió en su política
+// (conjuntos + bebidas sueltas). Además siempre se ofrecen las bebidas de la
+// casa (horchata, jamaica...) pagando la diferencia; otras bebidas no:
 //
 //   recargo = precio de la bebida elegida − precio de la incluida más barata
 //
@@ -10,6 +10,8 @@
 // La app de clientes calcula lo mismo para mostrarlo
 // (apps/customer/src/utils/drinkUpgrade.js); el checkout lo vuelve a calcular
 // aquí con los precios de la base de datos.
+
+export const HOUSE_DRINK_CATEGORY = "casa";
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
