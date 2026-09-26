@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { config } from "../../../config.js";
 
 // Cliente de la API de Wompi El Salvador (https://docs.wompi.sv).
@@ -33,6 +34,11 @@ export class WompiError extends Error {
 // cual). Wompi rechaza las credenciales si no vienen limpias.
 const cleanEnv = (value) => String(value ?? "").trim().replace(/^(["'])(.*)\1$/, "$2").trim();
 
+// Huella de una credencial: largo + inicio de su SHA-256. Sirve para comparar
+// la que usa el servidor con la del .env local sin enseñar el valor.
+export const fingerprint = (value) =>
+    `${value.length}/${createHash("sha256").update(value).digest("hex").slice(0, 8)}`;
+
 const wompiFetch = async (url, options, timeoutMs) => {
     try {
         return await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
@@ -67,7 +73,12 @@ const getAccessToken = async () => {
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.access_token) {
         // `error` es el código OAuth ("invalid_client", "invalid_scope"...): no es secreto.
-        const reason = [response.status, data?.error].filter(Boolean).join(" ");
+        const reason = [
+            response.status,
+            data?.error,
+            `id ${fingerprint(clientId)}`,
+            `secret ${fingerprint(clientSecret)}`,
+        ].filter(Boolean).join(" ");
         throw new WompiError("WOMPI_AUTH", `Wompi no entregó token de acceso (${reason}).`, reason);
     }
 
