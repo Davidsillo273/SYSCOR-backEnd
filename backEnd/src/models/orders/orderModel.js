@@ -53,6 +53,8 @@ const orderSchema = new Schema({
   },
   // Nombre del cliente o de la familia que anota el mesero al tomar el pedido
   localCustomerName: { type: String },
+  // Especificaciones generales para cocina que anota el mesero en la comanda
+  notes: { type: String, maxlength: 300 },
 
   // --- Campos exclusivos de pedidos EN LÍNEA ---
   customer: {

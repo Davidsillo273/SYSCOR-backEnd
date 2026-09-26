@@ -114,7 +114,7 @@ tablesController.deleteTable = async (req, res) => {
 // Actualiza los datos de una mesa (por ejemplo, para cambiarla de libre a ocupada)
 tablesController.updateTable = async (req, res) => {
   try {
-    const { number, status } = req.body;
+    const { number, status, customerName, peopleCount } = req.body;
 
     // Validar que el estado sea uno de los permitidos
     const validStatuses = ['libre', 'ocupada', 'limpieza', 'reservada'];
@@ -127,9 +127,43 @@ tablesController.updateTable = async (req, res) => {
       return res.status(404).json({ message: "Mesa no encontrada" });
     }
 
+    const toSet = {};
+    const toUnset = {};
+    if (number !== undefined) toSet.number = number;
+    if (status) toSet.status = status;
+
+    if (customerName !== undefined) {
+      const cleanName = String(customerName || '').trim().slice(0, 60);
+      if (cleanName) toSet.customerName = cleanName;
+      else toUnset.customerName = "";
+    }
+
+    if (peopleCount !== undefined) {
+      const count = parseInt(peopleCount, 10);
+      if (Number.isNaN(count) || count < 1 || count > 50) {
+        return res.status(400).json({ message: "El número de personas debe estar entre 1 y 50" });
+      }
+      toSet.peopleCount = count;
+    }
+
+    // Al ocuparse arranca el conteo de "abierta hace"; al dejar de estar
+    // ocupada se borran los datos de esa ocupación.
+    if (status === 'ocupada' && previousTable.status !== 'ocupada') {
+      toSet.occupiedAt = new Date();
+    }
+    if (status && status !== 'ocupada' && previousTable.status !== status) {
+      delete toSet.customerName;
+      delete toSet.peopleCount;
+      Object.assign(toUnset, { customerName: "", peopleCount: "", occupiedAt: "" });
+    }
+
+    const mongoUpdate = {};
+    if (Object.keys(toSet).length) mongoUpdate.$set = toSet;
+    if (Object.keys(toUnset).length) mongoUpdate.$unset = toUnset;
+
     const tableUpdated = await TablesModel.findByIdAndUpdate(
       req.params.id,
-      { number, status },
+      mongoUpdate,
       { new: true }
     );
 
@@ -199,7 +233,12 @@ tablesController.bulkUpdateStatus = async (req, res) => {
       }
     }
 
-    await TablesModel.updateMany({}, { $set: { status } });
+    if (status === 'ocupada') {
+      await TablesModel.updateMany({ status: { $ne: 'ocupada' } }, { $set: { occupiedAt: new Date() } });
+      await TablesModel.updateMany({}, { $set: { status } });
+    } else {
+      await TablesModel.updateMany({}, { $set: { status }, $unset: { customerName: "", peopleCount: "", occupiedAt: "" } });
+    }
 
     await notificationUtils.createNotification({
       req,

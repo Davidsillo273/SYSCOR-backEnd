@@ -12,7 +12,12 @@ const tableSchema = new Schema({
     type: String,
     enum: ['libre', 'ocupada', 'limpieza', 'reservada'],
     default: 'libre'
-  }
+  },
+  // Datos de la ocupación actual: se llenan al pasar a 'ocupada' y se limpian
+  // al pasar a cualquier otro estado.
+  customerName: { type: String, trim: true, maxlength: 60 },
+  peopleCount: { type: Number, min: 1, max: 50 },
+  occupiedAt: { type: Date }
 }, {
   // Registra fecha de creación y última actualización
   timestamps: true,

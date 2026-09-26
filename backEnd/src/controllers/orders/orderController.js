@@ -91,7 +91,7 @@ orderController.createOrder = async (req, res) => {
     const orderFields = { orderType };
 
     if (orderType === 'local') {
-      const { table, localCustomerName, paymentMethod, customer } = req.body;
+      const { table, localCustomerName, paymentMethod, customer, notes } = req.body;
       const waiter = req.user.id;
 
       if (!table) return res.status(400).json({ message: "La mesa es obligatoria en pedidos locales" });
@@ -119,7 +119,8 @@ orderController.createOrder = async (req, res) => {
 
       orderFields.table = table;
       orderFields.waiter = waiter;
-      orderFields.localCustomerName = localCustomerName?.trim() || undefined;
+      orderFields.localCustomerName = localCustomerName?.trim() || tableDoc.customerName || undefined;
+      orderFields.notes = typeof notes === 'string' && notes.trim() ? notes.trim().slice(0, 300) : undefined;
       orderFields.paymentMethod = paymentMethod || 'cash';
     } else {
       const {
@@ -636,38 +637,85 @@ orderController.getEmployeeLeaderboard = async (req, res) => {
 // cada una con sus pedidos locales activos (los que aún no llegan a
 // "delivered"/"cancelled") que él mismo tomó, para que sepa de un vistazo qué
 // mesas está atendiendo y en qué va cada pedido sin entrar a Pedidos y Órdenes.
+const KITCHEN_ACTIVE_STATUSES = ['pending', 'preparing', 'ready', 'atrasado'];
+
+// Comandas que forman la cuenta abierta de una mesa ocupada: las que siguen en
+// cocina y las ya servidas que aún no se cobran, desde que la mesa se ocupó.
+const belongsToOpenTab = (order, table) => {
+  const since = table.status === 'ocupada' && table.occupiedAt ? new Date(table.occupiedAt).getTime() : null;
+  if (KITCHEN_ACTIVE_STATUSES.includes(order.status)) {
+    return since === null || new Date(order.createdAt).getTime() >= since;
+  }
+  return order.status === 'delivered'
+    && order.paymentStatus === 'pending'
+    && since !== null
+    && new Date(order.createdAt).getTime() >= since;
+};
+
+// Tablero del mesero: todas las mesas con los datos de su ocupación y el
+// detalle de las comandas que forman su cuenta abierta.
 orderController.getWaiterDashboard = async (req, res) => {
   try {
-    const waiterId = req.user.id; // o req.query.waiter si prefieres pasarlo explícito
+    const tables = await TablesModel.find().sort({ number: 1 }).lean();
 
-    // Obtener todas las mesas
-    const tables = await TablesModel.find().sort({ number: 1 });
+    const occupiedSince = tables
+      .filter((t) => t.status === 'ocupada' && t.occupiedAt)
+      .map((t) => new Date(t.occupiedAt));
+    const oldestOccupation = occupiedSince.length
+      ? new Date(Math.min(...occupiedSince.map((d) => d.getTime())))
+      : null;
 
-    // Obtener pedidos locales activos del mesero (pending, preparing, ready, atrasado)
-    const activeOrders = await Order.find({
+    const statusFilter = [{ status: { $in: KITCHEN_ACTIVE_STATUSES } }];
+    if (oldestOccupation) {
+      statusFilter.push({ status: 'delivered', paymentStatus: 'pending', createdAt: { $gte: oldestOccupation } });
+    }
+
+    const orders = await Order.find({
       orderType: 'local',
-      waiter: waiterId,
-      status: { $in: ['pending', 'preparing', 'ready', 'atrasado'] }
+      table: { $ne: null },
+      $or: statusFilter,
     })
-    .populate('table', 'number status')
-    .sort({ createdAt: -1 });
+      .populate('waiter', 'name lastname')
+      .sort({ createdAt: 1 })
+      .lean();
 
-    // Combinar mesas con sus pedidos activos
-    const dashboard = tables.map(table => {
-      const ordersForTable = activeOrders.filter(
-        order => order.table._id.toString() === table._id.toString()
-      );
+    const ordersByTable = new Map();
+    for (const order of orders) {
+      const key = String(order.table);
+      if (!ordersByTable.has(key)) ordersByTable.set(key, []);
+      ordersByTable.get(key).push(order);
+    }
+
+    const dashboard = tables.map((table) => {
+      const tableOrders = (ordersByTable.get(String(table._id)) || []).filter((o) => belongsToOpenTab(o, table));
       return {
         _id: table._id,
         number: table.number,
         status: table.status,
-        activeOrders: ordersForTable.map(order => ({
+        customerName: table.status === 'ocupada' ? table.customerName || null : null,
+        peopleCount: table.status === 'ocupada' ? table.peopleCount || null : null,
+        occupiedAt: table.status === 'ocupada' ? table.occupiedAt || null : null,
+        activeOrders: tableOrders.map((order) => ({
           _id: order._id,
           status: order.status,
+          paymentStatus: order.paymentStatus,
           total: order.total,
-          itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
-          createdAt: order.createdAt
-        }))
+          itemCount: (order.items || []).reduce((sum, item) => sum + (item.quantity || 1), 0),
+          items: (order.items || []).map((item) => ({
+            _id: item._id,
+            itemType: item.itemType,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity || 1,
+            notes: item.notes || '',
+          })),
+          notes: order.notes || '',
+          customerName: order.localCustomerName || null,
+          waiter: order.waiter
+            ? `${order.waiter.name || ''} ${order.waiter.lastname || ''}`.trim()
+            : null,
+          createdAt: order.createdAt,
+        })),
       };
     });
 
@@ -675,6 +723,76 @@ orderController.getWaiterDashboard = async (req, res) => {
   } catch (error) {
     console.error("Error en dashboard:", error);
     res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+// Cobra la cuenta abierta de una mesa: todas sus comandas pendientes de pago
+// quedan pagadas con el método indicado y, si aún no se habían servido, se
+// marcan como entregadas (lo que genera su factura, igual que updateOrderStatus).
+orderController.checkoutTable = async (req, res) => {
+  try {
+    const { paymentMethod } = req.body;
+    if (!['cash', 'card'].includes(paymentMethod)) {
+      return res.status(400).json({ message: "El método de pago debe ser 'cash' o 'card'" });
+    }
+
+    const table = await TablesModel.findById(req.params.tableId).lean();
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    if (table.status !== 'ocupada') {
+      return res.status(400).json({ message: "Solo se puede cobrar la cuenta de una mesa ocupada" });
+    }
+
+    const candidates = await Order.find({
+      orderType: 'local',
+      table: table._id,
+      paymentStatus: 'pending',
+      status: { $in: [...KITCHEN_ACTIVE_STATUSES, 'delivered'] },
+    });
+    const orders = candidates.filter((o) => belongsToOpenTab(o, table));
+
+    if (orders.length === 0) {
+      return res.status(400).json({ message: "La mesa no tiene consumos pendientes de cobro" });
+    }
+
+    let total = 0;
+    for (const order of orders) {
+      const wasDelivered = order.status === 'delivered';
+      order.paymentStatus = 'paid';
+      order.paymentMethod = paymentMethod;
+      if (!wasDelivered) {
+        order.status = 'delivered';
+        order.statusHistory.push({ status: 'delivered', changedAt: new Date() });
+      }
+      await order.save();
+      total += order.total || 0;
+
+      const populated = await Order.findById(order._id)
+        .populate('table', 'number status')
+        .populate('waiter', 'name lastname')
+        .populate('customer', 'personalInfo');
+
+      if (!wasDelivered) await generateInvoice(populated);
+      emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: populated.toObject() });
+    }
+
+    await notificationUtils.createNotification({
+      req,
+      category: "orders",
+      action: "updated",
+      title: "Cuenta cobrada",
+      message: (actor) => `${actor.name} cobró la cuenta de la Mesa ${table.number} ($${total.toFixed(2)})`,
+      icon: "receipt",
+      severity: "success",
+      entity: { model: "Tables", id: table._id, label: `Mesa ${table.number}` },
+    });
+
+    return res.status(200).json({
+      message: "Cuenta cobrada",
+      data: { tableId: table._id, orders: orders.length, total, paymentMethod },
+    });
+  } catch (error) {
+    console.error("Error en checkoutTable:", error);
+    return res.status(500).json({ message: "Error interno del servidor" });
   }
 };
 

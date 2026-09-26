@@ -289,7 +289,7 @@ router.delete("/:id", validateAuthCookie(["admin"]), orderController.deleteOrder
  * /orders/waiter/dashboard:
  *   get:
  *     summary: Tablero del mesero (mesas + pedidos activos)
- *     description: Solo empleado. Devuelve todas las mesas junto con los pedidos locales activos (pending, preparing, ready, atrasado) del mesero autenticado, agrupados por mesa.
+ *     description: Solo empleado. Devuelve todas las mesas con los datos de su ocupación (cliente, personas, desde cuándo) y el detalle de las comandas de su cuenta abierta (en cocina o servidas sin cobrar).
  *     tags: [Pedidos]
  *     security:
  *       - cookieAuth: []
@@ -302,6 +302,41 @@ router.delete("/:id", validateAuthCookie(["admin"]), orderController.deleteOrder
  *         description: Error interno del servidor.
  */
 router.get('/waiter/dashboard', validateAuthCookie(["employee"]), orderController.getWaiterDashboard);
+
+/**
+ * @swagger
+ * /orders/table/{tableId}/checkout:
+ *   post:
+ *     summary: Cobrar la cuenta de una mesa
+ *     description: Marca como pagadas (y entregadas, si aún no lo estaban) todas las comandas de la cuenta abierta de una mesa ocupada.
+ *     tags: [Pedidos]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: tableId
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [paymentMethod]
+ *             properties:
+ *               paymentMethod: { type: string, enum: [cash, card] }
+ *     responses:
+ *       200:
+ *         description: Cuenta cobrada; devuelve el total y el número de comandas cobradas.
+ *       400:
+ *         description: Método de pago inválido, mesa no ocupada o sin consumos pendientes.
+ *       404:
+ *         description: Mesa no encontrada.
+ *       500:
+ *         description: Error interno del servidor.
+ */
+router.post('/table/:tableId/checkout', validateAuthCookie(["employee", "admin"]), orderController.checkoutTable);
 
 /**
  * @swagger
