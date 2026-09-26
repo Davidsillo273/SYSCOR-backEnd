@@ -19,12 +19,19 @@ let cachedUntil = 0;
 //   WOMPI_AUTH         Wompi rechazó las credenciales (no dio token)
 //   WOMPI_UNREACHABLE  Wompi no respondió (caído, sin red o tardó demasiado)
 export class WompiError extends Error {
-    constructor(code, message) {
+    constructor(code, message, detail) {
         super(message);
         this.name = "WompiError";
         this.code = code;
+        // Dato corto y no sensible que se le puede enseñar a la app.
+        this.detail = detail;
     }
 }
+
+// Las variables de entorno a veces llegan con comillas o espacios pegados
+// (dotenv las quita del .env local, pero el panel de Render las guarda tal
+// cual). Wompi rechaza las credenciales si no vienen limpias.
+const cleanEnv = (value) => String(value ?? "").trim().replace(/^(["'])(.*)\1$/, "$2").trim();
 
 const wompiFetch = async (url, options, timeoutMs) => {
     try {
@@ -40,7 +47,9 @@ const wompiFetch = async (url, options, timeoutMs) => {
 
 const getAccessToken = async () => {
     if (cachedToken && Date.now() < cachedUntil) return cachedToken;
-    if (!config.wompi.clientId || !config.wompi.clientSecret) {
+    const clientId = cleanEnv(config.wompi.clientId);
+    const clientSecret = cleanEnv(config.wompi.clientSecret);
+    if (!clientId || !clientSecret) {
         throw new WompiError("WOMPI_CONFIG", "Faltan CLIENT_ID / CLIENT_SECRET de Wompi en las variables de entorno.");
     }
 
@@ -48,16 +57,18 @@ const getAccessToken = async () => {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
-            grant_type: config.wompi.grantType || "client_credentials",
-            audience: config.wompi.audience || "wompi_api",
-            client_id: config.wompi.clientId,
-            client_secret: config.wompi.clientSecret,
+            grant_type: cleanEnv(config.wompi.grantType) || "client_credentials",
+            audience: cleanEnv(config.wompi.audience) || "wompi_api",
+            client_id: clientId,
+            client_secret: clientSecret,
         }),
     }, 15000);
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.access_token) {
-        throw new WompiError("WOMPI_AUTH", `Wompi no entregó token de acceso (${response.status}${data?.error ? `: ${data.error}` : ""}).`);
+        // `error` es el código OAuth ("invalid_client", "invalid_scope"...): no es secreto.
+        const reason = [response.status, data?.error].filter(Boolean).join(" ");
+        throw new WompiError("WOMPI_AUTH", `Wompi no entregó token de acceso (${reason}).`, reason);
     }
 
     cachedToken = data.access_token;

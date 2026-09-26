@@ -375,7 +375,7 @@ const describeStartError = (error) => {
         return {
             status: 503,
             title: "Pagos en línea no disponibles",
-            message: `El restaurante tiene un problema con su cuenta de pagos. Intenta más tarde. (${error.code})`,
+            message: `El restaurante tiene un problema con su cuenta de pagos. Intenta más tarde. (${[error.code, error.detail].filter(Boolean).join(" ")})`,
         };
     }
     if (/CARD_ENCRYPTION_KEY/.test(error?.message || "")) {
