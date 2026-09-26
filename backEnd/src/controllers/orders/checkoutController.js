@@ -416,18 +416,9 @@ checkoutController.createCheckout = async (req, res) => {
         // lo cubría (no mandó tarjeta) pero con los precios de hoy falta algo,
         // se le dice cuánto, en vez de pedirle un CVV sin explicación.
         if (chargeAmount > 0 && !card) {
-            // DEBUG TEMPORAL: para encontrar por qué el saldo no coincide con
-            // el que se ve en la base de datos. Quitar en cuanto se resuelva
-            // (ver conversación sobre "no me alcanza para $3.50" con $500 en Mongo).
-            console.error("DEBUG saldo:", {
-                reqUserId: req.user?.id,
-                customerIdEncontrado: customer._id?.toString(),
-                emailEncontrado: customer.loginInfo?.email,
-                walletCrudo: customer.wallet,
-            });
             return res.status(400).json({
                 title: "Tu saldo no alcanza",
-                message: `El total de tu pedido es $${amount.toFixed(2)} y tu saldo cubre $${creditApplied.toFixed(2)}. Faltan $${chargeAmount.toFixed(2)}: elige una tarjeta para pagarlos. [DEBUG id=${req.user?.id} encontrado=${customer._id} wallet=${JSON.stringify(customer.wallet)}]`,
+                message: `El total de tu pedido es $${amount.toFixed(2)} y tu saldo cubre $${creditApplied.toFixed(2)}. Faltan $${chargeAmount.toFixed(2)}: elige una tarjeta para pagarlos.`,
                 amount,
                 creditApplied,
                 chargeAmount,
