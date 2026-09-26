@@ -412,7 +412,18 @@ checkoutController.createCheckout = async (req, res) => {
         const creditApplied = useCredit ? round2(Math.min(balance, amount)) : 0;
         const chargeAmount = round2(amount - creditApplied);
 
-        // Si el saldo cubre todo, no hace falta tarjeta.
+        // Si el saldo cubre todo, no hace falta tarjeta. Si la app creyó que sí
+        // lo cubría (no mandó tarjeta) pero con los precios de hoy falta algo,
+        // se le dice cuánto, en vez de pedirle un CVV sin explicación.
+        if (chargeAmount > 0 && !card) {
+            return res.status(400).json({
+                title: "Tu saldo no alcanza",
+                message: `El total de tu pedido es $${amount.toFixed(2)} y tu saldo cubre $${creditApplied.toFixed(2)}. Faltan $${chargeAmount.toFixed(2)}: elige una tarjeta para pagarlos.`,
+                amount,
+                creditApplied,
+                chargeAmount,
+            });
+        }
         const resolved = chargeAmount > 0 ? resolveCard(customer, card) : {};
         if (resolved.error) return res.status(400).json({ title: "Revisa tu tarjeta", message: resolved.error });
 
