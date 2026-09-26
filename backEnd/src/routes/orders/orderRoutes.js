@@ -117,6 +117,36 @@ router.get("/mine", validateAuthCookie(["customer"]), orderController.getMyOrder
 
 /**
  * @swagger
+ * /orders/{id}/customer-cancel:
+ *   post:
+ *     summary: El cliente cancela su pedido en línea
+ *     description: Cliente. Solo durante los primeros 15 minutos y mientras el pedido no esté listo. Lo pagado con saldo regresa al saldo; lo pagado con tarjeta queda como reembolso pendiente que un admin hace desde Wompi.
+ *     tags: [Pedidos]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason: { type: string, example: "Me equivoqué de dirección" }
+ *     responses:
+ *       200:
+ *         description: "Cancelado. { title, message, refundedToWallet, refundToCard }"
+ *       400:
+ *         description: Fuera de plazo, ya listo/entregado o no es un pedido en línea.
+ *       409:
+ *         description: El estado cambió mientras se cancelaba.
+ */
+router.post("/:id/customer-cancel", validateAuthCookie(["customer"]), orderController.cancelMyOrder);
+
+/**
+ * @swagger
  * /orders/{id}/status:
  *   put:
  *     summary: Cambia el estado de un pedido

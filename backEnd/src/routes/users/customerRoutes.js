@@ -413,6 +413,8 @@ router
  */
 router
     .route("/:id/cards/:index")
+    // Editar solo nombre y vencimiento: { cardHolder, expiryMonth, expiryYear }
+    .patch(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.updateCard)
     .delete(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.deleteCard);
 
 /**

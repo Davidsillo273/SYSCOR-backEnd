@@ -17,7 +17,9 @@ const claimSchema = new Schema(
         order: { type: Schema.Types.ObjectId, ref: "Order", required: true, unique: true },
         type: {
             type: String,
-            enum: ["missing_item", "wrong_item", "quality", "late", "other"],
+            // "cancelled": no es una queja; es el reembolso a tarjeta de un pedido
+            // que el cliente canceló (ver orderController.cancelMyOrder).
+            enum: ["missing_item", "wrong_item", "quality", "late", "other", "cancelled"],
             required: true,
         },
         items: [

@@ -13,6 +13,8 @@ import { resolvePeriodRange, buildDateMatch } from "../../utils/orders/periodUti
 // cambio de estado al instante, sin recargar ni sondear.
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
+import Claim from "../../models/orders/claimModel.js";
+import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
 
 const orderController = {};
 
@@ -247,6 +249,16 @@ orderController.getOrders = async (req, res) => {
 // locales solo cuando el mesero ligó la cuenta del cliente. El cliente sale
 // del token, nunca de la query, para que nadie pueda listar pedidos ajenos.
 // Tampoco se popula el mesero ni el cliente: la app no los necesita.
+// El cliente puede cancelar su pedido en línea desde la app durante los
+// primeros 15 minutos, mientras cocina no lo tenga listo.
+export const CUSTOMER_CANCEL_WINDOW_MS = 15 * 60 * 1000;
+const CUSTOMER_CANCELLABLE_STATUSES = ['pending', 'preparing', 'atrasado'];
+
+const cancelDeadlineOf = (order) => {
+  if (order.orderType !== 'online' || !CUSTOMER_CANCELLABLE_STATUSES.includes(order.status)) return null;
+  return new Date(new Date(order.createdAt).getTime() + CUSTOMER_CANCEL_WINDOW_MS);
+};
+
 orderController.getMyOrders = async (req, res) => {
   try {
     await flagDelayedOrders();
@@ -255,11 +267,18 @@ orderController.getMyOrders = async (req, res) => {
     if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
 
     const orders = await Order.find(filter)
-      .select('orderType table isDelivery deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory createdAt updatedAt')
+      .select('orderType table isDelivery deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
       .populate('table', 'number')
       .sort({ createdAt: -1 });
 
-    return res.status(200).json(orders);
+    // Hasta cuándo se puede cancelar desde la app (null = ya no se puede).
+    const now = Date.now();
+    return res.status(200).json(
+      orders.map((order) => {
+        const deadline = cancelDeadlineOf(order);
+        return { ...order.toObject(), cancelDeadline: deadline && deadline.getTime() > now ? deadline : null };
+      }),
+    );
   } catch (error) {
     console.error("Error fetching customer orders:", error);
     return res.status(500).json({ message: "Internal server error" });
@@ -375,6 +394,119 @@ orderController.cancelOrder = async (req, res) => {
   } catch (error) {
     console.error("Error cancelling order:", error);
     return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// POST /orders/:id/customer-cancel — el cliente cancela su pedido en línea.
+// Lo pagado con saldo a favor regresa al saldo al instante. Lo pagado con
+// tarjeta lo devuelve un admin desde el panel de Wompi (su API no tiene
+// reembolsos): queda como reclamo "pending_refund" y se le avisa al equipo.
+orderController.cancelMyOrder = async (req, res) => {
+  try {
+    const current = await Order.findOne({ _id: req.params.id, customer: req.user.id });
+    if (!current) return res.status(404).json({ title: "Pedido no encontrado", message: "No encontramos ese pedido." });
+
+    if (current.status === 'cancelled') {
+      return res.status(400).json({ title: "Ya estaba cancelado", message: "Este pedido ya fue cancelado." });
+    }
+    if (current.orderType !== 'online') {
+      return res.status(400).json({ title: "No se puede cancelar", message: "Los pedidos hechos en el local se cancelan con tu mesero." });
+    }
+    if (!CUSTOMER_CANCELLABLE_STATUSES.includes(current.status)) {
+      return res.status(400).json({
+        title: "Ya no se puede cancelar",
+        message: current.status === 'ready' ? "Tu pedido ya está listo." : "Tu pedido ya fue entregado.",
+      });
+    }
+    const deadline = cancelDeadlineOf(current);
+    if (!deadline || Date.now() > deadline.getTime()) {
+      return res.status(400).json({
+        title: "Ya no se puede cancelar",
+        message: "Pasaron más de 15 minutos desde que hiciste el pedido. Si hay un problema, cuéntaselo a Chef Panchita.",
+      });
+    }
+
+    const paidOnline = current.paymentStatus === 'paid' && current.paymentMethod === 'online';
+    const toWallet = paidOnline ? Number(current.payment?.creditApplied) || 0 : 0;
+    const toCard = paidOnline ? Number(current.payment?.amount) || 0 : 0;
+    const reason = String(req.body?.reason || '').trim().slice(0, 200);
+
+    // Solo cambia si sigue en un estado cancelable: evita cancelar (y
+    // reembolsar) dos veces, o cancelar algo que cocina acaba de terminar.
+    const order = await Order.findOneAndUpdate(
+      { _id: current._id, customer: req.user.id, status: { $in: CUSTOMER_CANCELLABLE_STATUSES } },
+      {
+        $set: {
+          status: 'cancelled',
+          cancellation: { by: 'customer', reason, at: new Date(), refundedToWallet: toWallet, refundToCard: toCard },
+        },
+        $push: { statusHistory: { status: 'cancelled', changedAt: new Date() } },
+      },
+      { new: true },
+    ).populate('customer', 'personalInfo');
+    if (!order) {
+      return res.status(409).json({ title: "Ya no se puede cancelar", message: "El estado de tu pedido acaba de cambiar. Revísalo de nuevo." });
+    }
+
+    const ref = orderRef(order._id);
+    if (toWallet > 0) {
+      await creditWallet({
+        customer: req.user.id,
+        amount: toWallet,
+        type: 'order_cancel',
+        description: `Cancelaste el pedido ${ref}`,
+        order: order._id,
+      });
+    }
+    if (toCard > 0) {
+      try {
+        await Claim.create({
+          customer: req.user.id,
+          order: order._id,
+          type: 'cancelled',
+          description: reason,
+          amount: toCard,
+          resolution: 'card_refund',
+          status: 'pending_refund',
+          decidedBy: 'panchita',
+          reason: `Cancelaste el pedido: te reembolsaremos $${toCard.toFixed(2)} a tu tarjeta. Según tu banco, puede tardar unos días en verse.`,
+        });
+      } catch (error) {
+        // Ya había un reclamo de ese pedido: el aviso al equipo de abajo basta.
+        if (error?.code !== 11000) throw error;
+      }
+    }
+
+    await notificationUtils.createNotification({
+      req,
+      category: "orders",
+      action: "order_cancelled_by_customer",
+      title: toCard > 0 ? "Pedido cancelado · reembolso pendiente" : "Pedido cancelado por el cliente",
+      message: (actor) =>
+        toCard > 0
+          ? `${actor.name} canceló el pedido ${ref}. Reembolsa $${toCard.toFixed(2)} a su tarjeta desde el panel de Wompi.`
+          : `${actor.name} canceló el pedido ${ref}.`,
+      icon: "receipt",
+      severity: toCard > 0 ? "warning" : "info",
+      entity: { model: "Order", id: order._id, label: `Pedido ${ref}` },
+    });
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+
+    return res.status(200).json({
+      title: "Pedido cancelado",
+      message:
+        toCard > 0
+          ? `Te reembolsaremos $${toCard.toFixed(2)} a tu tarjeta. Según tu banco, puede tardar unos días en verse.` +
+            (toWallet > 0 ? ` Los $${toWallet.toFixed(2)} que pagaste con saldo ya regresaron a tu saldo.` : "")
+          : toWallet > 0
+            ? `Los $${toWallet.toFixed(2)} ya regresaron a tu saldo a favor.`
+            : "Listo, tu pedido quedó cancelado.",
+      refundedToWallet: toWallet,
+      refundToCard: toCard,
+    });
+  } catch (error) {
+    console.error("orderController.cancelMyOrder:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "No se pudo cancelar el pedido." });
   }
 };
 

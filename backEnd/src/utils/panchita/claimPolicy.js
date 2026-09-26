@@ -7,6 +7,7 @@ import Claim from "../../models/orders/claimModel.js";
 import Order from "../../models/orders/orderModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
 import notificationUtils from "../notifications/notificationUtils.js";
+import { logWalletMovement, orderRef as walletOrderRef } from "../wallet/walletUtils.js";
 
 // Hasta cuánto se aprueba sin que lo vea una persona.
 export const AUTO_APPROVE_LIMIT = 10;
@@ -23,6 +24,7 @@ export const CLAIM_TYPE_LABELS = {
     quality: "Problema con la calidad",
     late: "El pedido llegó tarde",
     other: "Otro problema",
+    cancelled: "Pedido cancelado",
 };
 
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
@@ -163,6 +165,14 @@ export const fileClaim = async ({ req, customerId, orderId, type, items, descrip
 
     if (status === "approved" && amount > 0) {
         await CustomerModel.updateOne({ _id: customerId }, { $inc: { "wallet.balance": amount } });
+        await logWalletMovement({
+            customer: customerId,
+            type: "claim_credit",
+            amount,
+            description: `Reclamo del pedido ${walletOrderRef(order._id)}: ${CLAIM_TYPE_LABELS[type] || "reclamo"}`,
+            order: order._id,
+            claim: claim._id,
+        });
     }
 
     // Lo que necesita a una persona le llega al panel.

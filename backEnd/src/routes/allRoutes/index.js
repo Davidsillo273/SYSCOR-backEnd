@@ -51,6 +51,7 @@ import changePasswordRoutes from "../auth/changePasswordRoutes.js";
 //Midleware de autenticación
 import { validateAuthCookie } from "../../middlewares/auth/authMiddleware.js"; 
 import authMeRoutes from "../auth/authMeRoutes.js";
+import walletRoutes from "../users/walletRoutes.js";
 
 const router = Router();
 
@@ -81,6 +82,7 @@ router.use("/purchase-invoices", purchaseInvoiceRoutes);
 
 // Usuarios administrativos: admins, empleados y clientes viven bajo /users
 router.use("/users/customers", customerRoutes);
+router.use("/wallet", walletRoutes);
 router.use("/users/employees", employeeRoutes);
 router.use("/users/admins", adminRoutes);
 // Planilla: se calcula a partir de la ficha de los empleados, por eso vive

@@ -135,6 +135,18 @@ const orderSchema = new Schema({
     enum: ['pending', 'preparing', 'ready', 'delivered', 'cancelled', 'atrasado'],
     default: 'pending'
   },
+  // Cancelación hecha por el cliente desde la app (hasta 15 min después de
+  // pedir, ver orderController.cancelMyOrder). Las del panel no la llenan.
+  cancellation: {
+    by: { type: String, enum: ['customer'] },
+    reason: { type: String, maxlength: 200 },
+    at: { type: Date },
+    // Lo que se le devolvió: al saldo a favor (al instante) y a la tarjeta
+    // (lo hace un admin desde Wompi; queda como reclamo "pending_refund").
+    refundedToWallet: { type: Number, default: 0 },
+    refundToCard: { type: Number, default: 0 },
+  },
+
   // Historial de cambios de estado: de aquí se calcula el tiempo promedio de
   // preparación (preparing -> ready), el tráfico de pedidos por hora, y
   // permite detectar cuándo empezó a estar "atrasado".

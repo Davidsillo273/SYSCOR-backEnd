@@ -14,6 +14,7 @@ import Claim from "../../models/orders/claimModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
 import { estimateOrder } from "../../utils/panchita/etaUtils.js";
 import { fileClaim, toPublicClaim, CLAIM_TYPE_LABELS } from "../../utils/panchita/claimPolicy.js";
+import { logWalletMovement, orderRef as walletOrderRef } from "../../utils/wallet/walletUtils.js";
 import {
     ACTIVE_ORDER_STATUSES,
     STATUS_LABELS,
@@ -565,6 +566,14 @@ panchitaController.resolveClaim = async (req, res) => {
             claim.reason = `Aprobado por el equipo: te abonamos $${finalAmount.toFixed(2)} de saldo a favor.`;
             claim.resolvedAt = new Date();
             await CustomerModel.updateOne({ _id: claim.customer }, { $inc: { "wallet.balance": finalAmount } });
+            await logWalletMovement({
+                customer: claim.customer,
+                type: "claim_credit",
+                amount: finalAmount,
+                description: `Reclamo del pedido ${walletOrderRef(claim.order)} aprobado por el equipo`,
+                order: claim.order,
+                claim: claim._id,
+            });
         } else if (action === "approve_card") {
             claim.amount = finalAmount;
             claim.resolution = "card_refund";

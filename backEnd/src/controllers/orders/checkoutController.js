@@ -25,6 +25,7 @@ import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTargetsUtils.js";
 import { includedDrinksOf, drinkSurchargeFor, HOUSE_DRINK_CATEGORY } from "../../utils/drinks/drinkUpgradeUtils.js";
+import { logWalletMovement } from "../../utils/wallet/walletUtils.js";
 
 const checkoutController = {};
 
@@ -316,6 +317,13 @@ const releaseCredit = async (checkout) => {
     );
     if (released) {
         await CustomerModel.updateOne({ _id: checkout.customer }, { $inc: { "wallet.balance": checkout.creditApplied } });
+        await logWalletMovement({
+            customer: checkout.customer,
+            type: "payment_release",
+            amount: checkout.creditApplied,
+            description: "Un pago no se completó: te regresamos el saldo",
+            checkout: checkout._id,
+        });
     }
 };
 
@@ -448,6 +456,15 @@ checkoutController.createCheckout = async (req, res) => {
             deliveryAddress: isDelivery ? String(deliveryAddress).trim() : undefined,
             pendingCard: saveCard && resolved.newCard ? resolved.newCard : undefined,
         });
+        if (creditApplied > 0) {
+            await logWalletMovement({
+                customer: customer._id,
+                type: "order_payment",
+                amount: -creditApplied,
+                description: "Pago de un pedido",
+                checkout: checkout._id,
+            });
+        }
 
         // Pagado por completo con saldo: el pedido se crea de una vez.
         if (chargeAmount === 0) {

@@ -514,6 +514,48 @@ customerController.addCard = async (req, res) => {
     }
 };
 
+// Editar una tarjeta guardada: nombre y vencimiento (el banco manda un
+// plástico nuevo con otra fecha). El número no se edita: es otra tarjeta.
+customerController.updateCard = async (req, res) => {
+    try {
+        const index = Number(req.params.index);
+        const { cardHolder, expiryMonth, expiryYear } = req.body || {};
+
+        const holder = String(cardHolder || "").trim();
+        if (holder.length < 3 || holder.length > 60) {
+            return res.status(400).json({ title: "Tarjeta inválida", message: "Escribe el nombre tal como aparece en la tarjeta." });
+        }
+        const month = Number(expiryMonth);
+        const year = Number(expiryYear);
+        if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 0 || year > 99) {
+            return res.status(400).json({ title: "Tarjeta inválida", message: "La fecha de vencimiento no es válida." });
+        }
+        const now = new Date();
+        const currentYear = now.getFullYear() % 100;
+        if (year < currentYear || (year === currentYear && month < now.getMonth() + 1)) {
+            return res.status(400).json({ title: "Tarjeta vencida", message: "Esa fecha ya pasó. Revisa el vencimiento de tu tarjeta." });
+        }
+
+        const customer = await findCustomerCards(req.params.id);
+        if (!customer) return customerNotFound(res);
+
+        const cards = customer.personalInfo.cards || [];
+        if (!Number.isInteger(index) || !cards[index]) return cardNotFound(res);
+
+        cards[index].cardHolder = holder;
+        cards[index].expiryMonth = month;
+        cards[index].expiryYear = year;
+        customer.personalInfo.cards = cards;
+        customer.markModified("personalInfo.cards");
+        await customer.save();
+
+        return respondWithCards(res, customer);
+    } catch (error) {
+        console.error("customerController.updateCard:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo actualizar la tarjeta." });
+    }
+};
+
 customerController.setDefaultCard = async (req, res) => {
     try {
         const index = Number(req.params.index);
