@@ -8,6 +8,7 @@ import { v2 as cloudinary } from "cloudinary";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import CartModel from "../../models/orders/cartModel.js";
 import { findByNameInsensitive } from "../../utils/common/duplicateNameUtils.js";
+import { parseAppliesTo } from "../../utils/extras/extraTargetsUtils.js";
 
 // Busca si ya existe un extra con ese nombre (sugerencia, no bloqueo)
 extrasController.checkName = async (req, res) => {
@@ -121,6 +122,8 @@ extrasController.insertExtras = async (req, res) => {
       name,
       price,
       category,
+      // A qué tipos de platillo se le puede agregar (ver extraTargetsUtils)
+      appliesTo: parseAppliesTo(req.body.appliesTo),
       status,
       isCompound: compound,
       ingredients: compound ? ingredients : [],
@@ -207,6 +210,9 @@ extrasController.updateExtra = async (req, res) => {
     }
 
     const updatedData = { name, price, category, status, isCompound: compound, ingredients: compound ? ingredients : [] };
+    // Solo se toca si viene en la petición: quien edite el extra sin conocer
+    // este campo (p. ej. el asistente del panel) no lo borra.
+    if (req.body.appliesTo !== undefined) updatedData.appliesTo = parseAppliesTo(req.body.appliesTo);
 
     // Si hay una nueva imagen, borramos la antigua y registramos la nueva
     if (req.file) {

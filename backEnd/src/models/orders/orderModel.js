@@ -92,9 +92,6 @@ const orderSchema = new Schema({
     enum: ['pending', 'paid'],
     default: 'pending'
   },
-  // Propina del pedido en línea. Va aparte de `total` (que es solo lo
-  // consumido) para no inflar las ventas en los reportes.
-  tip: { type: Number, default: 0 },
   // Cobro en línea con Wompi que originó este pedido (ver checkoutController).
   payment: {
     provider: { type: String },

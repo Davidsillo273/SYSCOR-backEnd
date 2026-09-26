@@ -6,6 +6,7 @@ import Combos from "../../models/menu/combosModel.js";
 import Drinks from "../../models/menu/drinksModel.js";
 import Saucers from "../../models/menu/saucersModel.js";
 import Extras from "../../models/menu/extrasModel.js";
+import { targetsForProduct, extraFitsProduct } from "../extras/extraTargetsUtils.js";
 
 export const ACTIVE_ORDER_STATUSES = ["pending", "preparing", "ready", "atrasado"];
 
@@ -88,8 +89,9 @@ export const usualOrder = async (customerId) => {
     for (const line of source.items || []) {
         if (line.itemType === "extra") {
             // Los extras van pegados al producto de la línea anterior.
-            const extra = await Extras.findById(line.itemId).select("name price status").lean();
-            if (parent && extra && isActive(extra)) {
+            const extra = await Extras.findById(line.itemId).select("name price status appliesTo").lean();
+            // Solo si hoy le corresponde a ese producto (ver extraTargetsUtils).
+            if (parent && extra && isActive(extra) && extraFitsProduct(extra, parent.targets)) {
                 parent.selectedExtras.push({ extraId: extra._id, name: extra.name, price: extra.price });
                 parent.unitPrice += Number(extra.price) || 0;
                 parent.totalPrice = parent.unitPrice * parent.quantity;
@@ -97,7 +99,11 @@ export const usualOrder = async (customerId) => {
             continue;
         }
         const model = MODELS[line.itemType];
-        const product = model ? await model.findById(line.itemId).select("name price status image").lean() : null;
+        let query = model ? model.findById(line.itemId).select("name price status image category saucers selectiveOptions") : null;
+        if (query && line.itemType === "combo") {
+            query = query.populate("saucers.saucerId", "category").populate("selectiveOptions.saucerId", "category");
+        }
+        const product = query ? await query.lean() : null;
         if (!product || !isActive(product)) {
             unavailable.push(line.name);
             parent = null;
@@ -117,6 +123,8 @@ export const usualOrder = async (customerId) => {
             selectedExtras: [],
         };
         items.push(parent);
+        // Se guarda aparte (no viaja a la app) para validar sus extras.
+        Object.defineProperty(parent, "targets", { value: targetsForProduct(line.itemType, product), enumerable: false });
     }
 
     return {

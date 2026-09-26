@@ -73,7 +73,9 @@ drinksController.getAllDrinks = async (req, res) => {
 // Obtiene solo las bebidas que están marcadas como activas
 drinksController.getActiveDrinks = async (req, res) => {
   try {
-    const drinks = await drinkModel.find({ status: "activo" });
+    // El panel guarda "disponible" (el default del modelo); se aceptan las
+    // mismas variantes que en combos y platillos.
+    const drinks = await drinkModel.find({ status: { $in: ["disponible", "activo", "active", "Disponible", "Activo"] } });
 
     return res.status(200).json(drinks);
   } catch (error) {

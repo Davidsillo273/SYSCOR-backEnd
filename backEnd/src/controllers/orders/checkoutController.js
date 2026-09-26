@@ -23,10 +23,11 @@ import cardCryptoUtils from "../../utils/users/cardCryptoUtils.js";
 import contactUtils, { normalizePhones } from "../../utils/users/customerContactUtils.js";
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
+import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTargetsUtils.js";
+import { includedDrinksOf, drinkSurchargeFor } from "../../utils/drinks/drinkUpgradeUtils.js";
 
 const checkoutController = {};
 
-const TIP_RATE = 0.05; // Igual que el carrito de la app
 const MAX_LINES = 50;
 const MAX_QUANTITY = 50;
 // Un cobro 3DS que nadie terminó en este tiempo se da por abandonado.
@@ -45,7 +46,9 @@ const apiPrefix = () => (process.env.API_URL || "/api").replace(/\/+$/, "");
 
 // Convierte el carrito de la app en líneas de pedido con precios del servidor.
 // Los extras van como líneas propias (así cocina los ve y el total cuadra);
-// salsas, bebida del combo y opciones elegidas van en las notas.
+// salsas, bebida del combo, opciones elegidas e ingredientes quitados van en
+// las notas. Si el cliente cambió la bebida del combo por otra que no viene
+// incluida, la diferencia se suma al precio de la línea del combo.
 const buildItems = async (cartItems) => {
     if (!Array.isArray(cartItems) || cartItems.length === 0) {
         return { error: "Tu carrito está vacío." };
@@ -62,7 +65,16 @@ const buildItems = async (cartItems) => {
             return { error: "Revisa las cantidades de tu pedido." };
         }
 
-        const product = await model.findById(cartItem.productId).select("name price status");
+        // La categoría (o las de los platillos del combo) decide qué extras le tocan.
+        let query = model.findById(cartItem.productId).select("name price status category saucers selectiveOptions drinkPolicy");
+        if (cartItem.productType === "combo") {
+            query = query
+                .populate("saucers.saucerId", "category")
+                .populate("selectiveOptions.saucerId", "category")
+                .populate({ path: "drinkPolicy.drinkSetIds", select: "drinkIds", populate: { path: "drinkIds", select: "price" } })
+                .populate("drinkPolicy.thirdPartyDrinkIds", "price");
+        }
+        const product = await query;
         if (!product || !isActive(product)) {
             return { error: `${cartItem.name || "Un producto"} ya no está disponible. Quítalo del carrito.` };
         }
@@ -71,9 +83,23 @@ const buildItems = async (cartItems) => {
         if (Array.isArray(cartItem.selectedSauces) && cartItem.selectedSauces.length > 0) {
             notes.push(`Salsas: ${cartItem.selectedSauces.slice(0, 10).join(", ")}`);
         }
+        let drinkSurcharge = 0;
         if (cartItem.selectedDrinkId) {
-            const drink = await Drinks.findById(cartItem.selectedDrinkId).select("name");
-            if (drink) notes.push(`Bebida: ${drink.name}`);
+            const drink = await Drinks.findById(cartItem.selectedDrinkId).select("name price category status");
+            if (drink && cartItem.productType === "combo") {
+                const included = includedDrinksOf(product);
+                const isIncluded = included.some((d) => String(d._id) === String(drink._id));
+                if (!isIncluded) {
+                    // Fuera de las incluidas se acepta cualquier bebida activa, con recargo.
+                    if (!isActive(drink) || included.length === 0) {
+                        return { error: `${drink.name} no se puede elegir en ${product.name}. Cambia la bebida.` };
+                    }
+                    drinkSurcharge = drinkSurchargeFor(included, drink);
+                }
+            }
+            if (drink) {
+                notes.push(drinkSurcharge > 0 ? `Bebida: ${drink.name} (+$${drinkSurcharge.toFixed(2)})` : `Bebida: ${drink.name}`);
+            }
         }
         if (Array.isArray(cartItem.selectedSelectiveItems) && cartItem.selectedSelectiveItems.length > 0) {
             const picks = cartItem.selectedSelectiveItems
@@ -82,20 +108,37 @@ const buildItems = async (cartItems) => {
                 .slice(0, 10);
             if (picks.length > 0) notes.push(`Elegido: ${picks.join(", ")}`);
         }
+        // [{ saucer, ingredients }]: "Taco al pastor: sin cebolla, cilantro".
+        const removals = (Array.isArray(cartItem.removedIngredients) ? cartItem.removedIngredients : [])
+            .slice(0, 10)
+            .map((group) => {
+                const list = (Array.isArray(group?.ingredients) ? group.ingredients : [])
+                    .filter((name) => typeof name === "string" && name.trim())
+                    .slice(0, 15)
+                    .map((name) => name.trim().toLowerCase())
+                    .join(", ");
+                if (!list) return null;
+                return typeof group.saucer === "string" && group.saucer ? `${group.saucer}: sin ${list}` : `Sin ${list}`;
+            })
+            .filter(Boolean);
+        if (removals.length > 0) notes.push(removals.join("; "));
 
         items.push({
             itemType: cartItem.productType,
             itemId: product._id,
             name: product.name,
-            price: Number(product.price) || 0,
+            price: round2((Number(product.price) || 0) + drinkSurcharge),
             quantity,
             notes: notes.join(" · ").slice(0, 300),
         });
 
         for (const selected of Array.isArray(cartItem.selectedExtras) ? cartItem.selectedExtras.slice(0, 20) : []) {
-            const extra = await Extras.findById(selected?.extraId).select("name price status");
+            const extra = await Extras.findById(selected?.extraId).select("name price status appliesTo");
             if (!extra || !isActive(extra)) {
                 return { error: `El extra ${selected?.name || ""} ya no está disponible.`.replace("  ", " ") };
+            }
+            if (!extraFitsProduct(extra, targetsForProduct(cartItem.productType, product))) {
+                return { error: `${extra.name} no se puede agregar a ${product.name}. Quítalo del carrito.` };
             }
             items.push({
                 itemType: "extra",
@@ -103,7 +146,8 @@ const buildItems = async (cartItems) => {
                 name: extra.name,
                 price: Number(extra.price) || 0,
                 quantity,
-                notes: `Para: ${product.name}`,
+                // En un combo, el platillo al que va: "Para: Combo Taquero · Taco al pastor".
+                notes: `Para: ${product.name}${typeof selected?.forSaucer === "string" && selected.forSaucer ? ` · ${selected.forSaucer.slice(0, 80)}` : ""}`,
             });
         }
     }
@@ -219,7 +263,6 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
             paymentStatus: "paid",
             items: checkout.items,
             total: checkout.subtotal,
-            tip: checkout.tip,
             payment: {
                 // Todo con saldo a favor no pasa por Wompi.
                 provider: checkout.chargeAmount > 0 ? "wompi" : "credit",
@@ -330,8 +373,8 @@ checkoutController.createCheckout = async (req, res) => {
         const customer = await CustomerModel.findById(req.user.id).select("personalInfo loginInfo.email wallet");
         if (!customer) return res.status(404).json({ title: "Cuenta no encontrada", message: "Vuelve a iniciar sesión." });
 
-        const tip = round2(built.subtotal * TIP_RATE);
-        const amount = round2(built.subtotal + tip);
+        // Sin propina: se cobra lo consumido.
+        const amount = built.subtotal;
 
         // Saldo a favor: se aparta ahora (descuento atómico) y se devuelve si
         // el pago no se completa.
@@ -357,7 +400,6 @@ checkoutController.createCheckout = async (req, res) => {
             customer: customer._id,
             items: built.items,
             subtotal: built.subtotal,
-            tip,
             amount,
             creditApplied,
             chargeAmount,

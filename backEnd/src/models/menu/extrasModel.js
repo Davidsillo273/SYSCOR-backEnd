@@ -1,5 +1,6 @@
 import mongoose, {Schema, model} from 'mongoose';
 import { UNIT_LIST } from "../../utils/units/unitsUtils.js"
+import { EXTRA_TARGETS } from "../../utils/extras/extraTargetsUtils.js"
 
 // Definimos la estructura para los Extras (adicionales al menú)
 const extraSchema = new Schema({
@@ -9,6 +10,9 @@ const extraSchema = new Schema({
     price: { type: Number },
     // Categoría libre para agrupar extras (Verduras, Lácteos, Salsas, Especial...)
     category: { type: String },
+    // A qué tipos de producto se le puede agregar (categorías de platillo o
+    // "Bebidas"). Vacío = no se ofrece en ningún lado (ver extraTargetsUtils)
+    appliesTo: [{ type: String, enum: EXTRA_TARGETS }],
     // Si está disponible o no
     status: { type: String },
     // Foto del extra (opcional: si no hay, el front usa un placeholder)

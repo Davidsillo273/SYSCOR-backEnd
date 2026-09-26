@@ -31,8 +31,7 @@ const checkoutSchema = new Schema(
         customer: { type: Schema.Types.ObjectId, ref: "Customer", required: true },
         items: { type: [checkoutItemSchema], default: [] },
         subtotal: { type: Number, required: true },
-        tip: { type: Number, default: 0 },
-        amount: { type: Number, required: true }, // total del pedido: subtotal + propina
+        amount: { type: Number, required: true }, // total del pedido (no hay propina)
         // Saldo a favor que el cliente usó. Se descuenta al crear el checkout
         // (queda apartado) y se le devuelve si el pago no se completa.
         creditApplied: { type: Number, default: 0 },
