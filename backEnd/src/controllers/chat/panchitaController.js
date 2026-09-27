@@ -21,11 +21,13 @@ import {
     shortId,
     summarizeOrder,
     findCustomerOrder,
+    fulfillmentOf,
     usualOrder,
     suggestDriverMessages,
 } from "../../utils/panchita/panchitaUtils.js";
 import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
 import { findOrderCode } from "../../utils/orders/orderCodeUtils.js";
+import Reservation from "../../models/tables/reservationModel.js";
 
 const panchitaController = {};
 
@@ -107,6 +109,20 @@ const TOOLS = {
             if (!ACTIVE_ORDER_STATUSES.includes(order.status)) {
                 return { success: false, message: `El pedido ${shortId(order)} ya está ${STATUS_LABELS[order.status]?.toLowerCase()}.` };
             }
+            // Comer en el local: lo que importa es la hora y la mesa de la reserva.
+            if (fulfillmentOf(order) === "dine_in" && order.orderType === "online") {
+                const reservation = await Reservation.findOne({ order: order._id }).populate("table", "number zone floor");
+                return {
+                    success: true,
+                    pedido: shortId(order),
+                    tipo: "comer en el local",
+                    horaDeLlegada: reservation?.reservedFor || order.scheduledFor,
+                    mesaGuardadaHasta: reservation?.expiresAt || null,
+                    mesa: reservation?.table?.number || null,
+                    estadoReserva: reservation?.status || null,
+                    nota: "Cocina lo prepara para la hora de llegada. Al llegar, el cliente escanea el QR de su mesa.",
+                };
+            }
             const eta = await estimateOrder(order);
             if (!eta) return { success: false, message: "Ese pedido no se puede rastrear (se hizo en el local)." };
             ctx.cards.push({ type: "eta", order: summarizeOrder(order), eta });
@@ -119,7 +135,7 @@ const TOOLS = {
                 riesgoDeRetraso: eta.risk,
                 minutosDeRetraso: eta.lateBy,
                 factores: eta.factors.map((f) => f.label),
-                tipo: eta.isDelivery ? "domicilio" : "recoger en el local",
+                tipo: eta.isDelivery ? "a domicilio" : "para llevar (pasa a traerlo)",
             };
         },
     },
@@ -422,7 +438,9 @@ const buildAlerts = (order, eta) => {
         preparing: `¡Ya están preparando tu pedido ${ref}! 🌮`,
         ready: order.isDelivery
             ? `Tu pedido ${ref} está listo y sale para tu casa.`
-            : `Tu pedido ${ref} está listo: ya puedes pasar por él.`,
+            : fulfillmentOf(order) === "dine_in"
+                ? `Tu pedido ${ref} está listo y va a tu mesa.`
+                : `Tu pedido ${ref} está listo: ya puedes pasar por él.`,
         atrasado: `Tu pedido ${ref} va más lento de lo normal en cocina. Ya estoy pendiente.`,
     }[order.status];
     if (statusText) alerts.push({ key: `${order._id}:status:${order.status}`, level: order.status === "atrasado" ? "warning" : "info", text: statusText });

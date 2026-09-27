@@ -24,6 +24,20 @@ export const STATUS_LABELS = {
 // pedido; se conserva el nombre por los llamados existentes.
 export const shortId = (order) => orderCode(order);
 
+// Cómo recibe el cliente el pedido. Los pedidos anteriores a `fulfillment`
+// solo tienen isDelivery; los del mesero siempre son en el local.
+export const fulfillmentOf = (order) => {
+    if (order.orderType === "local") return "dine_in";
+    if (order.fulfillment) return order.fulfillment;
+    return order.isDelivery ? "delivery" : "pickup";
+};
+
+export const FULFILLMENT_LABELS = {
+    delivery: "a domicilio",
+    pickup: "para llevar (el cliente pasa a traerlo)",
+    dine_in: "comer en el local (con mesa reservada)",
+};
+
 // Resumen corto de un pedido, para el chat y para la app.
 export const summarizeOrder = (order) => ({
     id: order._id,
@@ -33,6 +47,10 @@ export const summarizeOrder = (order) => ({
     statusLabel: STATUS_LABELS[order.status] || order.status,
     orderType: order.orderType,
     isDelivery: !!order.isDelivery,
+    fulfillment: fulfillmentOf(order),
+    modalidad: FULFILLMENT_LABELS[fulfillmentOf(order)],
+    // Comer en el local: hora a la que llega el cliente.
+    scheduledFor: order.scheduledFor || null,
     deliveryAddress: order.deliveryAddress || null,
     total: order.total,
     createdAt: order.createdAt,

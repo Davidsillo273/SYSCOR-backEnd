@@ -185,6 +185,9 @@ const travelEstimate = async (order, cachedDestination) => {
 // Estimación completa de un pedido en línea (usa el caché si está fresco).
 export const estimateOrder = async (order, { force = false } = {}) => {
     if (!order || order.orderType !== "online") return null;
+    // Comer en el local: se prepara para la hora de la reserva, no hay
+    // "listo en X minutos" ni recorrido (ver reservationController).
+    if (order.fulfillment === "dine_in") return null;
     if (["delivered", "cancelled"].includes(order.status)) return null;
 
     const cached = order.eta;
