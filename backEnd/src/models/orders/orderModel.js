@@ -118,6 +118,18 @@ const orderSchema = new Schema({
     checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
   },
 
+  // Cobros de productos agregados después ("Agregar más productos").
+  additions: [
+    {
+      checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
+      amount: { type: Number },
+      creditApplied: { type: Number, default: 0 },
+      transactionId: { type: String },
+      subtotal: { type: Number },
+      at: { type: Date, default: Date.now },
+    }
+  ],
+
   // --- Campos de reparto a domicilio ---
   // Empleado de tipo "delivery" que aceptó este pedido.
   driver: {
@@ -145,18 +157,6 @@ const orderSchema = new Schema({
   },
   // Nota opcional que deja el repartidor para la sucursal al confirmar la entrega.
   driverNote: { type: String, maxlength: 300, default: null },
-
-  // Cobros de productos agregados después ("Agregar más productos").
-  additions: [
-    {
-      checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
-      amount: { type: Number },
-      creditApplied: { type: Number, default: 0 },
-      transactionId: { type: String },
-      subtotal: { type: Number },
-      at: { type: Date, default: Date.now },
-    }
-  ],
 
   // Mensajes del cliente para el repartidor (ej. "Déjalo en la recepción").
   // Los manda desde la app, con un toque o escritos por él.
