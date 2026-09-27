@@ -17,6 +17,7 @@ import wompiRoutes from "../orders/wompiRoutes.js"
 import checkoutRoutes from "../orders/checkoutRoutes.js";
 import panchitaRoutes from "../chat/panchitaRoutes.js";
 import tablesRoutes from "../tables/tablesRoutes.js"
+import reservationRoutes from "../tables/reservationRoutes.js";
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
 import settingsRoutes from "../settings/settingsRoutes.js";
 import aiRoutes from "../ai/aiRoutes.js";
@@ -94,6 +95,7 @@ router.use("/users/dui-scan", duiScanRoutes);
 
 router.use("/inventory", inventoryRoutes);
 router.use("/tables", tablesRoutes);
+router.use("/reservations", reservationRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/ai", aiRoutes);

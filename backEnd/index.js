@@ -3,6 +3,7 @@ import http from "http";
 import app, { allowedOrigins } from "./app.js";
 import "./database.js";
 import { initSocket } from "./src/config/socket.js";
+import { syncReservations } from "./src/utils/tables/reservationUtils.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
 // ahí; en local seguimos usando el 4000 de siempre.
@@ -22,6 +23,11 @@ async function main() {
     initSocket(server, allowedOrigins);
 
     server.listen(PORT);
+
+    // Reservas de mesa de la app: apartar la mesa antes de la hora y soltarla
+    // si el cliente no llegó. También se revisa al consultar mesas o reservas,
+    // por si el servidor estuvo dormido.
+    setInterval(syncReservations, 60 * 1000);
     // Mostramos un mensaje en la consola para confirmar que el servidor está funcionando
     console.log(`Server on port ${PORT}`);
 }

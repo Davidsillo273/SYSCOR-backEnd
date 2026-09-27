@@ -26,6 +26,16 @@ import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTargetsUtils.js";
 import { includedDrinksOf, drinkSurchargeFor, HOUSE_DRINK_CATEGORY } from "../../utils/drinks/drinkUpgradeUtils.js";
 import { logWalletMovement } from "../../utils/wallet/walletUtils.js";
+import Reservation from "../../models/tables/reservationModel.js";
+import {
+    validateReservationTime,
+    tablesForSlot,
+    floorsWithRoom,
+    syncReservations,
+    GRACE_MS,
+} from "../../utils/tables/reservationUtils.js";
+
+const FULFILLMENTS = ["delivery", "pickup", "dine_in"];
 
 const checkoutController = {};
 
@@ -210,6 +220,7 @@ const publicCheckout = (checkout) => ({
     creditApplied: checkout.creditApplied || 0,
     chargeAmount: checkout.chargeAmount,
     orderId: checkout.order || null,
+    fulfillment: checkout.fulfillment || (checkout.isDelivery ? "delivery" : "pickup"),
     message: checkout.wompi?.message || null,
 });
 
@@ -250,6 +261,8 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
 
     try {
         const customer = await CustomerModel.findById(checkout.customer).select("personalInfo loginInfo.email");
+        const fulfillment = checkout.fulfillment || (checkout.isDelivery ? "delivery" : "pickup");
+        const dineIn = fulfillment === "dine_in" ? checkout.dineIn : null;
         const order = await Order.create({
             orderType: "online",
             customer: checkout.customer,
@@ -259,7 +272,11 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
                 email: customer?.loginInfo?.email || "",
             },
             isDelivery: checkout.isDelivery,
+            fulfillment,
             deliveryAddress: checkout.isDelivery ? checkout.deliveryAddress : undefined,
+            // Comer en el local: cocina lo ve como pedido programado para la hora
+            // de llegada.
+            scheduledFor: dineIn ? dineIn.reservedFor : null,
             paymentMethod: "online",
             paymentStatus: "paid",
             items: checkout.items,
@@ -276,6 +293,22 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
             status: "pending",
             statusHistory: [{ status: "pending", changedAt: new Date() }],
         });
+
+        // La mesa se elige después, con Panchita, en el chat de la app.
+        if (dineIn) {
+            const fullName = [customer?.personalInfo?.name, customer?.personalInfo?.lastname].filter(Boolean).join(" ");
+            const reservation = await Reservation.create({
+                customer: checkout.customer,
+                order: order._id,
+                reservedFor: dineIn.reservedFor,
+                expiresAt: new Date(new Date(dineIn.reservedFor).getTime() + GRACE_MS),
+                partySize: dineIn.partySize,
+                alias: dineIn.alias || undefined,
+                displayName: (dineIn.alias || fullName || "Cliente app").slice(0, 60),
+            });
+            order.reservation = reservation._id;
+            await order.save();
+        }
 
         checkout.status = "approved";
         checkout.order = order._id;
@@ -399,10 +432,38 @@ const describeStartError = (error) => {
 // POST /payments/checkout
 checkoutController.createCheckout = async (req, res) => {
     try {
-        const { items: cartItems, isDelivery, deliveryAddress, card, saveCard, useCredit } = req.body || {};
+        const { items: cartItems, deliveryAddress, card, saveCard, useCredit, dineIn } = req.body || {};
+        // Las versiones anteriores de la app solo mandan isDelivery.
+        const fulfillment = FULFILLMENTS.includes(req.body?.fulfillment)
+            ? req.body.fulfillment
+            : req.body?.isDelivery
+                ? "delivery"
+                : "pickup";
+        const isDelivery = fulfillment === "delivery";
 
         const built = await buildItems(cartItems);
         if (built.error) return res.status(400).json({ title: "Revisa tu pedido", message: built.error });
+
+        // Comer en el local: hora dentro del horario y que haya mesa, antes de cobrar.
+        let dineInData;
+        if (fulfillment === "dine_in") {
+            const timeError = validateReservationTime(dineIn?.reservedFor);
+            if (timeError) return res.status(400).json({ title: "Revisa la hora", message: timeError });
+            const partySize = Number(dineIn?.partySize);
+            if (!Number.isInteger(partySize) || partySize < 1 || partySize > 20) {
+                return res.status(400).json({ title: "Revisa las personas", message: "Indica para cuántas personas es la mesa." });
+            }
+            await syncReservations();
+            const tables = await tablesForSlot({ reservedFor: dineIn.reservedFor, partySize });
+            if (floorsWithRoom(tables).length === 0) {
+                return res.status(409).json({ title: "Sin mesas", message: "Ya no quedan mesas para esa hora. Elige otra." });
+            }
+            dineInData = {
+                reservedFor: new Date(dineIn.reservedFor),
+                partySize,
+                alias: String(dineIn.alias || "").trim().slice(0, 40) || undefined,
+            };
+        }
 
         if (isDelivery && (!deliveryAddress || String(deliveryAddress).trim().length < 5)) {
             return res.status(400).json({ title: "Falta la dirección", message: "Elige a dónde llevamos tu pedido." });
@@ -452,7 +513,9 @@ checkoutController.createCheckout = async (req, res) => {
             amount,
             creditApplied,
             chargeAmount,
-            isDelivery: !!isDelivery,
+            isDelivery,
+            fulfillment,
+            dineIn: dineInData,
             deliveryAddress: isDelivery ? String(deliveryAddress).trim() : undefined,
             pendingCard: saveCard && resolved.newCard ? resolved.newCard : undefined,
         });

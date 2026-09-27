@@ -71,6 +71,12 @@ const orderSchema = new Schema({
   // true = se lleva a domicilio, false = el cliente pasa a recogerlo al local.
   // Solo aplica a pedidos "online" (un pedido local siempre es "en el local").
   isDelivery: { type: Boolean },
+  // Cómo lo recibe el cliente: 'delivery' (a domicilio), 'pickup' (pasa a
+  // traerlo) o 'dine_in' (come en el local, con mesa reservada). isDelivery
+  // se sigue llenando para lo que ya lo leía.
+  fulfillment: { type: String, enum: ['delivery', 'pickup', 'dine_in'] },
+  // Mesa reservada de un pedido 'dine_in' (ver reservationModel).
+  reservation: { type: mongoose.Schema.Types.ObjectId, ref: "Reservation", default: null },
   // Dirección de entrega. Solo obligatoria cuando isDelivery es true.
   deliveryAddress: { type: String },
   // Si se llena, el pedido queda programado para esa fecha/hora en vez de

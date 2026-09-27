@@ -15,6 +15,7 @@ import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
+import { cancelReservationOfOrder, syncReservations, publicTable } from "../../utils/tables/reservationUtils.js";
 
 const orderController = {};
 
@@ -263,13 +264,15 @@ const cancelDeadlineOf = (order) => {
 orderController.getMyOrders = async (req, res) => {
   try {
     await flagDelayedOrders();
+    await syncReservations();
 
     const filter = { customer: req.user.id };
     if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
 
     const orders = await Order.find(filter)
-      .select('orderType table isDelivery deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
+      .select('orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
       .populate('table', 'number')
+      .populate({ path: 'reservation', select: 'status reservedFor expiresAt partySize alias table checkedInAt', populate: { path: 'table' } })
       .sort({ createdAt: -1 });
 
     // Hasta cuándo se puede cancelar desde la app (null = ya no se puede).
@@ -277,7 +280,16 @@ orderController.getMyOrders = async (req, res) => {
     return res.status(200).json(
       orders.map((order) => {
         const deadline = cancelDeadlineOf(order);
-        return { ...order.toObject(), cancelDeadline: deadline && deadline.getTime() > now ? deadline : null };
+        const plain = order.toObject();
+        // De la mesa reservada solo lo que la app necesita (sin el QR).
+        if (plain.reservation) {
+          plain.reservation = {
+            ...plain.reservation,
+            id: String(plain.reservation._id),
+            table: order.reservation.table ? publicTable(order.reservation.table) : null,
+          };
+        }
+        return { ...plain, cancelDeadline: deadline && deadline.getTime() > now ? deadline : null };
       }),
     );
   } catch (error) {
@@ -448,6 +460,9 @@ orderController.cancelMyOrder = async (req, res) => {
     if (!order) {
       return res.status(409).json({ title: "Ya no se puede cancelar", message: "El estado de tu pedido acaba de cambiar. Revísalo de nuevo." });
     }
+
+    // Si iba a comer en el local, la mesa queda libre para alguien más.
+    await cancelReservationOfOrder(order._id);
 
     const ref = orderRef(order._id);
     if (toWallet > 0) {
