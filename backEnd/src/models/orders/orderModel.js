@@ -118,6 +118,34 @@ const orderSchema = new Schema({
     checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
   },
 
+  // --- Campos de reparto a domicilio ---
+  // Empleado de tipo "delivery" que aceptó este pedido.
+  driver: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Employee",
+    default: null,
+  },
+  // Estado propio del ciclo de reparto, independiente del status general del
+  // pedido. El status del pedido ya llega a "ready" cuando cocina termina;
+  // este campo rastrea qué pasa después: quién lo tomó y hasta dónde llegó.
+  //   available  → listo para que un repartidor lo tome (status === 'ready', isDelivery, sin driver)
+  //   accepted   → un repartidor lo aceptó pero aún no salió
+  //   on_route   → el repartidor salió con el pedido
+  //   delivered  → entregado (coincide con status === 'delivered')
+  deliveryStatus: {
+    type: String,
+    enum: ["available", "accepted", "on_route", "delivered"],
+    default: null,
+  },
+  // Cómo fue entregado al cliente: 'hand' (en mano) o 'reception' (dejado en recepción).
+  deliveryMethod: {
+    type: String,
+    enum: ["hand", "reception"],
+    default: null,
+  },
+  // Nota opcional que deja el repartidor para la sucursal al confirmar la entrega.
+  driverNote: { type: String, maxlength: 300, default: null },
+
   // Cobros de productos agregados después ("Agregar más productos").
   additions: [
     {

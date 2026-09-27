@@ -1,4 +1,4 @@
-import bcryptjs from "bcryptjs";
+﻿import bcryptjs from "bcryptjs";
 import Order from "../../models/orders/orderModel.js";
 import Invoice from "../../models/orders/invoiceModel.js";
 import Combos from "../../models/menu/combosModel.js";
@@ -20,13 +20,13 @@ import { HOLD_MS, canHold, publicHold, notOnHoldFilter, releaseExpiredHolds, emi
 
 const orderController = {};
 
-// Mismo público que ya define notificationUtils para la categoría "orders":
+// Mismo pÃºblico que ya define notificationUtils para la categorÃ­a "orders":
 // las comandas las ven el administrador y el personal.
 const ORDERS_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.orders;
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
-// Revisa los pedidos "preparing" y marca como "atrasado" los que llevan más
+// Revisa los pedidos "preparing" y marca como "atrasado" los que llevan mÃ¡s
 // de 1 hora sin pasar a "ready". Se ejecuta cada vez que se listan pedidos,
 // para no depender de un cron/proceso en segundo plano aparte.
 const flagDelayedOrders = async () => {
@@ -43,8 +43,8 @@ const flagDelayedOrders = async () => {
       order.statusHistory.push({ status: 'atrasado', changedAt: new Date() });
       await order.save();
 
-      // Este cambio no lo pidió nadie desde la interfaz: lo decide el propio
-      // servidor. Sin avisarlo por socket, el panel mostraría la comanda como
+      // Este cambio no lo pidiÃ³ nadie desde la interfaz: lo decide el propio
+      // servidor. Sin avisarlo por socket, el panel mostrarÃ­a la comanda como
       // "preparing" hasta que alguien recargara la pantalla.
       const populated = await Order.findById(order._id)
         .populate('table', 'number status')
@@ -58,8 +58,8 @@ const flagDelayedOrders = async () => {
   }
 };
 
-// Arma el registro de facturación (colección "invoices") a partir de un
-// pedido recién entregado. Se llama una sola vez, cuando el estado pasa a
+// Arma el registro de facturaciÃ³n (colecciÃ³n "invoices") a partir de un
+// pedido reciÃ©n entregado. Se llama una sola vez, cuando el estado pasa a
 // "delivered" por primera vez (ver updateOrderStatus).
 const generateInvoice = async (order) => {
   await Invoice.create({
@@ -80,9 +80,9 @@ const generateInvoice = async (order) => {
   });
 };
 
-// Crear pedido. Los campos que se guardan cambian según orderType:
-//   - "local": requiere mesa (debe estar "ocupada") y el mesero es quien tiene la sesión.
-//   - "online": requiere cliente, y si isDelivery es true, la dirección de entrega.
+// Crear pedido. Los campos que se guardan cambian segÃºn orderType:
+//   - "local": requiere mesa (debe estar "ocupada") y el mesero es quien tiene la sesiÃ³n.
+//   - "online": requiere cliente, y si isDelivery es true, la direcciÃ³n de entrega.
 orderController.createOrder = async (req, res) => {
   try {
     const { orderType, items } = req.body;
@@ -102,18 +102,18 @@ orderController.createOrder = async (req, res) => {
       const tableDoc = await TablesModel.findById(table);
       if (!tableDoc) return res.status(404).json({ message: "Mesa no encontrada" });
 
-      // Solo se pueden crear pedidos si la mesa está ocupada
+      // Solo se pueden crear pedidos si la mesa estÃ¡ ocupada
       if (tableDoc.status !== 'ocupada') {
         return res.status(400).json({ message: "Solo se pueden tomar pedidos en mesas ocupadas" });
       }
 
       // Un pedido local solo admite pago con tarjeta o efectivo en caja
       if (paymentMethod && !['card', 'cash'].includes(paymentMethod)) {
-        return res.status(400).json({ message: "El método de pago debe ser 'card' o 'cash' en pedidos locales" });
+        return res.status(400).json({ message: "El mÃ©todo de pago debe ser 'card' o 'cash' en pedidos locales" });
       }
 
       // Opcional: si el mesero liga la cuenta del cliente, el pedido local
-      // también le aparece en "Mis pedidos" de la app de clientes.
+      // tambiÃ©n le aparece en "Mis pedidos" de la app de clientes.
       if (customer) {
         const customerExists = await CustomerModel.exists({ _id: customer });
         if (!customerExists) return res.status(404).json({ message: "Cliente no encontrado" });
@@ -131,15 +131,15 @@ orderController.createOrder = async (req, res) => {
         contact, receivedBy, scheduledFor,
       } = req.body;
 
-      if (!customer) return res.status(400).json({ message: "El cliente es obligatorio en pedidos en línea" });
+      if (!customer) return res.status(400).json({ message: "El cliente es obligatorio en pedidos en lÃ­nea" });
       if (isDelivery && !deliveryAddress) {
-        return res.status(400).json({ message: "La dirección de entrega es obligatoria para pedidos a domicilio" });
+        return res.status(400).json({ message: "La direcciÃ³n de entrega es obligatoria para pedidos a domicilio" });
       }
       if (paymentMethod && !['cash', 'card_on_delivery', 'online'].includes(paymentMethod)) {
-        return res.status(400).json({ message: "Método de pago inválido para un pedido en línea" });
+        return res.status(400).json({ message: "MÃ©todo de pago invÃ¡lido para un pedido en lÃ­nea" });
       }
 
-      // La información de contacto se precarga del cliente, pero se puede
+      // La informaciÃ³n de contacto se precarga del cliente, pero se puede
       // sobrescribir manualmente desde el body (ej. otro correo de contacto)
       let contactInfo = contact;
       if (!contactInfo) {
@@ -210,7 +210,7 @@ orderController.createOrder = async (req, res) => {
       .populate('customer', 'personalInfo');
 
     // La comanda ya poblada es justo lo que muestra la pantalla de pedidos,
-    // así que el frontend puede insertarla directo sin pedir la lista entera.
+    // asÃ­ que el frontend puede insertarla directo sin pedir la lista entera.
     emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_CREATED, { order: populated.toObject() });
 
     return res.status(201).json({ message: "Order created", data: populated });
@@ -257,9 +257,9 @@ orderController.getOrders = async (req, res) => {
   }
 };
 
-// Pedidos del cliente con sesión ("Mis pedidos" de la app de clientes).
-// Devuelve los de ambos tipos: los en línea siempre llevan `customer`, y los
-// locales solo cuando el mesero ligó la cuenta del cliente. El cliente sale
+// Pedidos del cliente con sesiÃ³n ("Mis pedidos" de la app de clientes).
+// Devuelve los de ambos tipos: los en lÃ­nea siempre llevan `customer`, y los
+// locales solo cuando el mesero ligÃ³ la cuenta del cliente. El cliente sale
 // del token, nunca de la query, para que nadie pueda listar pedidos ajenos.
 // Tampoco se popula el mesero ni el cliente: la app no los necesita.
 // El cliente puede cancelar su pedido en línea desde la app mientras siga
@@ -317,7 +317,7 @@ orderController.getMyOrders = async (req, res) => {
 };
 
 // Cambiar estado de un pedido. Cuando el nuevo estado es "delivered" (y no
-// lo era ya), se dispara la facturación automática (ver generateInvoice).
+// lo era ya), se dispara la facturaciÃ³n automÃ¡tica (ver generateInvoice).
 orderController.updateOrderStatus = async (req, res) => {
   try {
     const { status } = req.body;
@@ -345,7 +345,7 @@ orderController.updateOrderStatus = async (req, res) => {
 
     const mongoUpdate = { $set: { status } };
     // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
-    // reinicia su tiempo en preparación (acción "Continuar" de cocina).
+    // reinicia su tiempo en preparaciÃ³n (acciÃ³n "Continuar" de cocina).
     const restartsPreparation = status === 'preparing' && ['preparing', 'atrasado'].includes(previousOrder.status);
     if (previousOrder.status !== status || restartsPreparation) {
       mongoUpdate.$push = { statusHistory: { status, changedAt: new Date() } };
@@ -408,13 +408,13 @@ orderController.updatePaymentStatus = async (req, res) => {
 };
 
 // Cancela un pedido (no lo borra, solo lo marca "cancelled") exigiendo la
-// contraseña de un administrador como confirmación, ya que cancelar un
-// pedido ya tomado puede implicar pérdidas para el negocio.
+// contraseÃ±a de un administrador como confirmaciÃ³n, ya que cancelar un
+// pedido ya tomado puede implicar pÃ©rdidas para el negocio.
 orderController.cancelOrder = async (req, res) => {
   try {
     const { adminPassword } = req.body;
     if (!adminPassword) {
-      return res.status(400).json({ message: "Se requiere la contraseña del administrador para cancelar el pedido." });
+      return res.status(400).json({ message: "Se requiere la contraseÃ±a del administrador para cancelar el pedido." });
     }
 
     const admins = await AdminModel.find().select("loginInfo.password");
@@ -427,7 +427,7 @@ orderController.cancelOrder = async (req, res) => {
     }
 
     if (!authorized) {
-      return res.status(401).json({ message: "Contraseña de administrador incorrecta." });
+      return res.status(401).json({ message: "ContraseÃ±a de administrador incorrecta." });
     }
 
     const order = await Order.findByIdAndUpdate(
@@ -451,7 +451,7 @@ orderController.cancelOrder = async (req, res) => {
   }
 };
 
-// POST /orders/:id/customer-cancel — el cliente cancela su pedido en línea.
+// POST /orders/:id/customer-cancel â€” el cliente cancela su pedido en lÃ­nea.
 // Lo pagado con saldo a favor regresa al saldo al instante. Lo pagado con
 // tarjeta lo devuelve un admin desde el panel de Wompi (su API no tiene
 // reembolsos): queda como reclamo "pending_refund" y se le avisa al equipo.
@@ -499,7 +499,7 @@ orderController.cancelMyOrder = async (req, res) => {
       return res.status(409).json({ title: "Ya no se puede cancelar", message: "Cocina acaba de empezar tu pedido: ya no se puede cancelar." });
     }
 
-    // Si iba a comer en el local, la mesa queda libre para alguien más.
+    // Si iba a comer en el local, la mesa queda libre para alguien mÃ¡s.
     await cancelReservationOfOrder(order._id);
 
     const ref = orderRef(order);
@@ -523,10 +523,10 @@ orderController.cancelMyOrder = async (req, res) => {
           resolution: 'card_refund',
           status: 'pending_refund',
           decidedBy: 'panchita',
-          reason: `Cancelaste el pedido: te reembolsaremos $${toCard.toFixed(2)} a tu tarjeta. Según tu banco, puede tardar unos días en verse.`,
+          reason: `Cancelaste el pedido: te reembolsaremos $${toCard.toFixed(2)} a tu tarjeta. SegÃºn tu banco, puede tardar unos dÃ­as en verse.`,
         });
       } catch (error) {
-        // Ya había un reclamo de ese pedido: el aviso al equipo de abajo basta.
+        // Ya habÃ­a un reclamo de ese pedido: el aviso al equipo de abajo basta.
         if (error?.code !== 11000) throw error;
       }
     }
@@ -535,11 +535,11 @@ orderController.cancelMyOrder = async (req, res) => {
       req,
       category: "orders",
       action: "order_cancelled_by_customer",
-      title: toCard > 0 ? "Pedido cancelado · reembolso pendiente" : "Pedido cancelado por el cliente",
+      title: toCard > 0 ? "Pedido cancelado Â· reembolso pendiente" : "Pedido cancelado por el cliente",
       message: (actor) =>
         toCard > 0
-          ? `${actor.name} canceló el pedido ${ref}. Reembolsa $${toCard.toFixed(2)} a su tarjeta desde el panel de Wompi.`
-          : `${actor.name} canceló el pedido ${ref}.`,
+          ? `${actor.name} cancelÃ³ el pedido ${ref}. Reembolsa $${toCard.toFixed(2)} a su tarjeta desde el panel de Wompi.`
+          : `${actor.name} cancelÃ³ el pedido ${ref}.`,
       icon: "receipt",
       severity: toCard > 0 ? "warning" : "info",
       entity: { model: "Order", id: order._id, label: `Pedido ${ref}` },
@@ -550,11 +550,11 @@ orderController.cancelMyOrder = async (req, res) => {
       title: "Pedido cancelado",
       message:
         toCard > 0
-          ? `Te reembolsaremos $${toCard.toFixed(2)} a tu tarjeta. Según tu banco, puede tardar unos días en verse.` +
+          ? `Te reembolsaremos $${toCard.toFixed(2)} a tu tarjeta. SegÃºn tu banco, puede tardar unos dÃ­as en verse.` +
             (toWallet > 0 ? ` Los $${toWallet.toFixed(2)} que pagaste con saldo ya regresaron a tu saldo.` : "")
           : toWallet > 0
             ? `Los $${toWallet.toFixed(2)} ya regresaron a tu saldo a favor.`
-            : "Listo, tu pedido quedó cancelado.",
+            : "Listo, tu pedido quedÃ³ cancelado.",
       refundedToWallet: toWallet,
       refundToCard: toCard,
     });
@@ -639,17 +639,17 @@ orderController.deleteOrder = async (req, res) => {
 };
 
 // Clientes destacados (apartado de Clientes): tres rankings distintos, todos
-// basados en pedidos en línea ya entregados (los locales no llevan cliente
+// basados en pedidos en lÃ­nea ya entregados (los locales no llevan cliente
 // con cuenta, los anota el mesero como texto libre).
 orderController.getCustomerLeaderboard = async (req, res) => {
   try {
-    // Las tres tarjetas usan el MISMO período (un solo selector en el
+    // Las tres tarjetas usan el MISMO perÃ­odo (un solo selector en el
     // frontend las controla a la vez), pero conservan valores por defecto
-    // distintos a propósito cuando no se manda ningún filtro explícito:
-    //   - "Más activos" seguía siendo sobre 7 días (period=week por defecto)
-    //   - "Mayor gasto" seguía siendo histórico completo (period=all)
-    //   - "Compras más caras" seguía siendo la semana en curso (period=week)
-    // Si el frontend manda un período explícito, ese gana en las tres.
+    // distintos a propÃ³sito cuando no se manda ningÃºn filtro explÃ­cito:
+    //   - "MÃ¡s activos" seguÃ­a siendo sobre 7 dÃ­as (period=week por defecto)
+    //   - "Mayor gasto" seguÃ­a siendo histÃ³rico completo (period=all)
+    //   - "Compras mÃ¡s caras" seguÃ­a siendo la semana en curso (period=week)
+    // Si el frontend manda un perÃ­odo explÃ­cito, ese gana en las tres.
     const explicitPeriod = req.query.period || (req.query.from && req.query.to ? 'custom' : null);
 
     const mostActiveRange = resolvePeriodRange({ ...req.query, period: explicitPeriod || 'week' });
@@ -709,8 +709,8 @@ orderController.getCustomerLeaderboard = async (req, res) => {
   }
 };
 
-// Empleados destacados: quién vendió más (pedidos locales entregados),
-// filtrable por día/semana/mes.
+// Empleados destacados: quiÃ©n vendiÃ³ mÃ¡s (pedidos locales entregados),
+// filtrable por dÃ­a/semana/mes.
 orderController.getEmployeeLeaderboard = async (req, res) => {
   try {
     // Acepta day/week/month/year/all, o un rango personalizado (?from&to).
@@ -746,14 +746,14 @@ orderController.getEmployeeLeaderboard = async (req, res) => {
   }
 };
 
-// Vista rápida para el mesero con sesión iniciada: todas las mesas del local,
-// cada una con sus pedidos locales activos (los que aún no llegan a
-// "delivered"/"cancelled") que él mismo tomó, para que sepa de un vistazo qué
-// mesas está atendiendo y en qué va cada pedido sin entrar a Pedidos y Órdenes.
+// Vista rÃ¡pida para el mesero con sesiÃ³n iniciada: todas las mesas del local,
+// cada una con sus pedidos locales activos (los que aÃºn no llegan a
+// "delivered"/"cancelled") que Ã©l mismo tomÃ³, para que sepa de un vistazo quÃ©
+// mesas estÃ¡ atendiendo y en quÃ© va cada pedido sin entrar a Pedidos y Ã“rdenes.
 const KITCHEN_ACTIVE_STATUSES = ['pending', 'preparing', 'ready', 'atrasado'];
 
 // Comandas que forman la cuenta abierta de una mesa ocupada: las que siguen en
-// cocina y las ya servidas que aún no se cobran, desde que la mesa se ocupó.
+// cocina y las ya servidas que aÃºn no se cobran, desde que la mesa se ocupÃ³.
 const belongsToOpenTab = (order, table) => {
   const since = table.status === 'ocupada' && table.occupiedAt ? new Date(table.occupiedAt).getTime() : null;
   if (KITCHEN_ACTIVE_STATUSES.includes(order.status)) {
@@ -765,7 +765,7 @@ const belongsToOpenTab = (order, table) => {
     && new Date(order.createdAt).getTime() >= since;
 };
 
-// Tablero del mesero: todas las mesas con los datos de su ocupación y el
+// Tablero del mesero: todas las mesas con los datos de su ocupaciÃ³n y el
 // detalle de las comandas que forman su cuenta abierta.
 orderController.getWaiterDashboard = async (req, res) => {
   try {
@@ -840,13 +840,13 @@ orderController.getWaiterDashboard = async (req, res) => {
 };
 
 // Cobra la cuenta abierta de una mesa: todas sus comandas pendientes de pago
-// quedan pagadas con el método indicado y, si aún no se habían servido, se
+// quedan pagadas con el mÃ©todo indicado y, si aÃºn no se habÃ­an servido, se
 // marcan como entregadas (lo que genera su factura, igual que updateOrderStatus).
 orderController.checkoutTable = async (req, res) => {
   try {
     const { paymentMethod } = req.body;
     if (!['cash', 'card'].includes(paymentMethod)) {
-      return res.status(400).json({ message: "El método de pago debe ser 'cash' o 'card'" });
+      return res.status(400).json({ message: "El mÃ©todo de pago debe ser 'cash' o 'card'" });
     }
 
     const table = await TablesModel.findById(req.params.tableId).lean();
@@ -893,7 +893,7 @@ orderController.checkoutTable = async (req, res) => {
       category: "orders",
       action: "updated",
       title: "Cuenta cobrada",
-      message: (actor) => `${actor.name} cobró la cuenta de la Mesa ${table.number} ($${total.toFixed(2)})`,
+      message: (actor) => `${actor.name} cobrÃ³ la cuenta de la Mesa ${table.number} ($${total.toFixed(2)})`,
       icon: "receipt",
       severity: "success",
       entity: { model: "Tables", id: table._id, label: `Mesa ${table.number}` },
