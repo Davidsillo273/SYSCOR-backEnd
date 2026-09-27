@@ -315,7 +315,10 @@ cartController.updateCart = async (req, res) => {
     // Cuando el estado cambia, dejamos rastro en statusHistory para poder calcular
     // después el tiempo promedio de preparación (cooking -> ready) y el tráfico por hora
     const mongoUpdate = { $set: updateData };
-    if (status !== undefined && previousCart?.status !== status) {
+    // Reenviar "cooking" sobre un pedido que ya se cocinaba reinicia su tiempo
+    // en preparación (acción "Continuar" de cocina sobre una comanda retrasada).
+    const restartsCooking = status === 'cooking' && previousCart?.status === 'cooking';
+    if (status !== undefined && (previousCart?.status !== status || restartsCooking)) {
       mongoUpdate.$push = { statusHistory: { status, changedAt: new Date() } };
     }
 

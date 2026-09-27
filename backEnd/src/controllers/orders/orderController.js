@@ -220,8 +220,9 @@ orderController.createOrder = async (req, res) => {
 };
 
 // Obtener pedidos, con filtros opcionales por tipo (?orderType=local|online)
-// y estado (?status=). El populate de table/waiter/customer no molesta
-// aunque el pedido sea del otro tipo: simplemente queda null.
+// y estado (?status=, admite varios separados por coma). ?from= limita a los
+// pedidos creados desde esa fecha. El populate de table/waiter/customer no
+// molesta aunque el pedido sea del otro tipo: simplemente queda null.
 orderController.getOrders = async (req, res) => {
   try {
     await flagDelayedOrders();
@@ -229,13 +230,20 @@ orderController.getOrders = async (req, res) => {
     const filter = {};
     if (req.query.table) filter.table = req.query.table;
     if (req.query.waiter) filter.waiter = req.query.waiter;
-    if (req.query.status) filter.status = req.query.status;
+    if (req.query.status) {
+      const statuses = String(req.query.status).split(',').map((s) => s.trim()).filter(Boolean);
+      filter.status = statuses.length > 1 ? { $in: statuses } : statuses[0];
+    }
     if (req.query.orderType) filter.orderType = req.query.orderType;
+    if (req.query.from) {
+      const from = new Date(req.query.from);
+      if (!Number.isNaN(from.getTime())) filter.createdAt = { $gte: from };
+    }
     // Pedidos programados: los que tienen una fecha/hora futura para prepararse
     if (req.query.scheduled === 'true') filter.scheduledFor = { $ne: null };
 
     const orders = await Order.find(filter)
-      .populate('table', 'number status')
+      .populate('table', 'number status peopleCount')
       .populate('waiter', 'name lastname')
       .populate('customer', 'personalInfo loginInfo.email')
       .sort({ createdAt: -1 });
@@ -313,7 +321,10 @@ orderController.updateOrderStatus = async (req, res) => {
     if (!previousOrder) return res.status(404).json({ message: "Order not found" });
 
     const mongoUpdate = { $set: { status } };
-    if (previousOrder.status !== status) {
+    // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
+    // reinicia su tiempo en preparación (acción "Continuar" de cocina).
+    const restartsPreparation = status === 'preparing' && ['preparing', 'atrasado'].includes(previousOrder.status);
+    if (previousOrder.status !== status || restartsPreparation) {
       mongoUpdate.$push = { statusHistory: { status, changedAt: new Date() } };
     }
 
