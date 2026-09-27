@@ -100,10 +100,14 @@ const employeeSchema = new mongoose.Schema(
       isssNumber: { type: String, default: null, trim: true }, // N.º de afiliación al ISSS
       afpInstitution: {
         type: String,
+        // Solo existen Crecer y Confía (lo valida employeeFieldValidations);
+        // ipsfa/inpep quedan en el enum para no invalidar registros viejos.
         enum: ["confia", "crecer", "ipsfa", "inpep", null],
         default: null,
       },
-      afpNumber: { type: String, default: null, trim: true }, // NUP / n.º de afiliación a la AFP
+      // Ya no se pide: el n.º de afiliación a la AFP va vinculado al DUI. Se
+      // conserva el campo para no perder lo que ya estaba guardado.
+      afpNumber: { type: String, default: null, trim: true },
 
       // Cuenta donde se le deposita el salario
       bankName: { type: String, default: null, trim: true },
@@ -168,7 +172,6 @@ employeeSchema.virtual("missingFields").get(function getMissingFields() {
 
   if (!work.isssNumber) missing.push("Número de ISSS");
   if (!work.afpInstitution) missing.push("Institución de AFP");
-  if (!work.afpNumber) missing.push("Número de AFP");
   if (!work.bankName || !work.bankAccount) missing.push("Cuenta bancaria");
   if (!docs.proofOfAddress?.url) missing.push("Comprobante de domicilio");
   if (!docs.criminalRecord?.url) missing.push("Antecedentes penales");

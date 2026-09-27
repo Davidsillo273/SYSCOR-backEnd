@@ -39,6 +39,14 @@ const checkoutSchema = new Schema(
         chargeAmount: { type: Number, required: true }, // lo que se cobra a la tarjeta: amount - creditApplied
         isDelivery: { type: Boolean, default: false },
         deliveryAddress: { type: String },
+        // 'delivery', 'pickup' o 'dine_in'. Con 'dine_in' se crea además una
+        // reserva de mesa con estos datos cuando se aprueba el pago.
+        fulfillment: { type: String, enum: ["delivery", "pickup", "dine_in"], default: "pickup" },
+        dineIn: {
+            reservedFor: Date,
+            partySize: Number,
+            alias: String,
+        },
         status: {
             type: String,
             enum: ["pending", "processing", "approved", "rejected", "error"],

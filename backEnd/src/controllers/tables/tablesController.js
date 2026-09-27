@@ -1,7 +1,8 @@
 const tablesController = {};
 
 // Importamos el modelo de las mesas para interactuar con la base de datos
-import TablesModel from "../../models/tables/tablesModel.js";
+import TablesModel, { TABLE_ZONES } from "../../models/tables/tablesModel.js";
+import { syncReservations } from "../../utils/tables/reservationUtils.js";
 import Order from "../../models/orders/orderModel.js";
 // Utilidad para registrar los movimientos como notificaciones del sistema
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
@@ -35,9 +36,39 @@ const emitCancelledOrdersOfTables = async (tableIds) => {
   }
 };
 
+// Capacidad, planta, zona y lugar en el croquis que manda el panel. Devuelve
+// { data } con lo válido o { error } con el mensaje. La planta sale de la zona.
+const parseLayoutFields = (body) => {
+  const data = {};
+  if (body.capacity !== undefined) {
+    const capacity = parseInt(body.capacity, 10);
+    if (Number.isNaN(capacity) || capacity < 1 || capacity > 20) {
+      return { error: "La capacidad debe estar entre 1 y 20 personas" };
+    }
+    data.capacity = capacity;
+  }
+  if (body.zone !== undefined) {
+    if (!TABLE_ZONES[body.zone]) return { error: "La ubicación no es válida" };
+    data.zone = body.zone;
+    data.floor = TABLE_ZONES[body.zone].floor;
+  }
+  if (body.position !== undefined && body.position !== null) {
+    const pos = {};
+    for (const key of ["x", "y", "w", "h"]) {
+      const value = Number(body.position[key]);
+      if (Number.isNaN(value) || value < 0 || value > 100) return { error: "La posición en el croquis no es válida" };
+      pos[key] = value;
+    }
+    data.position = pos;
+  }
+  return { data };
+};
+
 // Obtiene todas las mesas registradas en el restaurante
 tablesController.getTables = async (req, res) => {
   try {
+    // Las reservas de la app apartan y sueltan mesas según la hora.
+    await syncReservations();
     const tables = await TablesModel.find();
     return res.status(200).json(tables);
   } catch (error) {
@@ -51,11 +82,14 @@ tablesController.insertTable = async (req, res) => {
   try {
     let { number, status } = req.body;
 
-    
+    const layout = parseLayoutFields(req.body);
+    if (layout.error) return res.status(400).json({ title: "Datos no válidos", message: layout.error });
+
     // Preparamos la nueva mesa para guardarla
     const newTable = new TablesModel({
       number,
       status,
+      ...layout.data,
     });
 
     // Guardamos la mesa en la base de datos
@@ -116,6 +150,9 @@ tablesController.updateTable = async (req, res) => {
   try {
     const { number, status, customerName, peopleCount } = req.body;
 
+    const layout = parseLayoutFields(req.body);
+    if (layout.error) return res.status(400).json({ message: layout.error });
+
     // Validar que el estado sea uno de los permitidos
     const validStatuses = ['libre', 'ocupada', 'limpieza', 'reservada'];
     if (status && !validStatuses.includes(status)) {
@@ -131,6 +168,10 @@ tablesController.updateTable = async (req, res) => {
     const toUnset = {};
     if (number !== undefined) toSet.number = number;
     if (status) toSet.status = status;
+    Object.assign(toSet, layout.data);
+    // Si el personal saca la mesa de 'reservada', deja de estar apartada
+    // para la reserva de la app que la tenía.
+    if (status && status !== 'reservada') toSet.reservation = null;
 
     if (customerName !== undefined) {
       const cleanName = String(customerName || '').trim().slice(0, 60);
@@ -235,9 +276,10 @@ tablesController.bulkUpdateStatus = async (req, res) => {
 
     if (status === 'ocupada') {
       await TablesModel.updateMany({ status: { $ne: 'ocupada' } }, { $set: { occupiedAt: new Date() } });
-      await TablesModel.updateMany({}, { $set: { status } });
+      await TablesModel.updateMany({}, { $set: { status, reservation: null } });
     } else {
-      await TablesModel.updateMany({}, { $set: { status }, $unset: { customerName: "", peopleCount: "", occupiedAt: "" } });
+      const reservation = status === 'reservada' ? {} : { reservation: null };
+      await TablesModel.updateMany({}, { $set: { status, ...reservation }, $unset: { customerName: "", peopleCount: "", occupiedAt: "" } });
     }
 
     await notificationUtils.createNotification({

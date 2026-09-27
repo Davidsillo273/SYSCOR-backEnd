@@ -17,6 +17,7 @@ import wompiRoutes from "../orders/wompiRoutes.js"
 import checkoutRoutes from "../orders/checkoutRoutes.js";
 import panchitaRoutes from "../chat/panchitaRoutes.js";
 import tablesRoutes from "../tables/tablesRoutes.js"
+import reservationRoutes from "../tables/reservationRoutes.js";
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
 import settingsRoutes from "../settings/settingsRoutes.js";
 import aiRoutes from "../ai/aiRoutes.js";
@@ -39,6 +40,7 @@ import inviteEmployeeRoutes from "../auth/employees/inviteEmployeeRoutes.js";
 import loginEmployeeRoutes from "../auth/employees/loginEmployeeRoutes.js";
 //auth - admins
 import inviteAdminRoutes from "../auth/admins/inviteAdminRoutes.js";
+import invitationEmailRoutes from "../auth/invitationEmailRoutes.js";
 import loginAdminRoutes from "../auth/admins/loginAdminRoutes.js";
 
 //auth - logout
@@ -93,6 +95,7 @@ router.use("/users/dui-scan", duiScanRoutes);
 
 router.use("/inventory", inventoryRoutes);
 router.use("/tables", tablesRoutes);
+router.use("/reservations", reservationRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
 router.use("/ai", aiRoutes);
@@ -109,6 +112,8 @@ router.use("/auth/employees/login", loginEmployeeRoutes);
 //auth - admins
 router.use("/auth/admins/invite", inviteAdminRoutes);
 router.use("/auth/admins/login", loginAdminRoutes);
+//auth - invitaciones (comprobar correo mientras se escribe)
+router.use("/auth/invitations", invitationEmailRoutes);
 
 //auth - logout
 router.use("/auth/logout", logoutRoutes);
