@@ -70,10 +70,15 @@ const router = Router();
  *         description: Filtra por ID de mesero.
  *       - in: query
  *         name: status
- *         schema: { type: string, enum: [pending, preparing, ready, delivered, cancelled, atrasado] }
+ *         schema: { type: string, example: "pending,preparing,atrasado" }
+ *         description: Uno o varios estados separados por coma (pending, preparing, ready, delivered, cancelled, atrasado).
  *       - in: query
  *         name: orderType
  *         schema: { type: string, enum: [local, online] }
+ *       - in: query
+ *         name: from
+ *         schema: { type: string, format: date-time }
+ *         description: Solo pedidos creados desde esta fecha.
  *       - in: query
  *         name: scheduled
  *         schema: { type: string, enum: ["true"] }
