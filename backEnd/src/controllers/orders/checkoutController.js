@@ -483,10 +483,38 @@ const describeStartError = (error) => {
     return { status: 500, title: "No se pudo iniciar el pago", message: `Error inesperado del servidor. (${error?.name || "ERROR"})` };
 };
 
+// La app reintentó un pago que ya había llegado (mismo requestId): se le
+// responde con ese mismo cobro, en el punto en que vaya.
+const replayCheckout = (req, res, checkout) => {
+    if (["error", "rejected"].includes(checkout.status)) {
+        return res.status(409).json({
+            title: "Ese intento de pago no se completó",
+            message: checkout.wompi?.message || "El pago anterior no se completó. Vuelve a intentarlo.",
+            retryWithNewRequest: true,
+        });
+    }
+    const base = publicBaseUrl(req);
+    const pendingUrl = checkout.status === "pending" ? checkout.wompi?.paymentUrl || null : null;
+    return res.status(200).json({
+        ...publicCheckout(checkout),
+        paymentUrl: pendingUrl,
+        returnUrlPrefix: pendingUrl ? `${base}${apiPrefix()}/payments/wompi/return` : null,
+        replayed: true,
+    });
+};
+
 // POST /payments/checkout
 checkoutController.createCheckout = async (req, res) => {
     try {
         const { items: cartItems, deliveryAddress, card, saveCard, useCredit, dineIn, addToOrder } = req.body || {};
+
+        // Reintento del mismo intento de pago (la app no alcanzó a recibir la
+        // respuesta): no se crea ni se cobra otro.
+        const requestId = /^[A-Za-z0-9_-]{8,64}$/.test(String(req.body?.requestId || "")) ? String(req.body.requestId) : null;
+        if (requestId) {
+            const previous = await Checkout.findOne({ customer: req.user.id, requestId });
+            if (previous) return replayCheckout(req, res, previous);
+        }
 
         // "Agregar más productos": el pedido debe ser del cliente y seguir en
         // su tiempo para agregar. La forma de entrega es la del pedido original.
@@ -576,8 +604,11 @@ checkoutController.createCheckout = async (req, res) => {
             }
         }
 
-        const checkout = await Checkout.create({
+        let checkout;
+        try {
+            checkout = await Checkout.create({
             customer: customer._id,
+            requestId: requestId || undefined,
             items: built.items,
             subtotal: built.subtotal,
             amount,
@@ -593,7 +624,19 @@ checkoutController.createCheckout = async (req, res) => {
                     ? String(deliveryAddress).trim()
                     : undefined,
             pendingCard: saveCard && resolved.newCard ? resolved.newCard : undefined,
-        });
+            });
+        } catch (error) {
+            // Dos toques casi al mismo tiempo con el mismo requestId: el otro ya
+            // creó el cobro. Se devuelve el saldo apartado aquí y se responde con aquel.
+            if (error?.code === 11000 && requestId) {
+                if (creditApplied > 0) {
+                    await CustomerModel.updateOne({ _id: customer._id }, { $inc: { "wallet.balance": creditApplied } });
+                }
+                const previous = await Checkout.findOne({ customer: req.user.id, requestId });
+                if (previous) return replayCheckout(req, res, previous);
+            }
+            throw error;
+        }
         if (creditApplied > 0) {
             await logWalletMovement({
                 customer: customer._id,
@@ -666,7 +709,7 @@ checkoutController.createCheckout = async (req, res) => {
             });
         }
 
-        checkout.wompi = { transactionId: data.idTransaccion, isReal: !!data.esReal };
+        checkout.wompi = { transactionId: data.idTransaccion, isReal: !!data.esReal, paymentUrl: data.urlCompletarPago3Ds };
         await checkout.save();
 
         return res.status(201).json({

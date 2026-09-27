@@ -57,6 +57,8 @@ const checkoutSchema = new Schema(
             authorizationCode: String,
             isReal: Boolean,
             message: String,
+            // URL de la verificación 3DS, para devolverla si la app reintenta.
+            paymentUrl: String,
         },
         // Tarjeta nueva que el cliente pidió guardar: se pasa a su cuenta solo
         // si el pago se aprueba, y entonces se borra de aquí. Número cifrado
@@ -73,8 +75,18 @@ const checkoutSchema = new Schema(
         // "Agregar más productos": pedido al que se suman estos productos al
         // aprobarse el pago (en vez de crear un pedido nuevo).
         addToOrder: { type: Schema.Types.ObjectId, ref: "Order", default: null },
+        // Identificador del intento de pago que manda la app. Si la respuesta
+        // no le llega (se le acabó el tiempo de espera) y vuelve a tocar
+        // "Pagar", llega el mismo: se devuelve este cobro en vez de crear otro.
+        requestId: { type: String },
     },
     { timestamps: true },
+);
+
+// Un solo cobro por intento de pago de cada cliente (ver requestId).
+checkoutSchema.index(
+    { customer: 1, requestId: 1 },
+    { unique: true, partialFilterExpression: { requestId: { $type: "string" } } },
 );
 
 export default model("Checkout", checkoutSchema);
