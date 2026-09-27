@@ -7,6 +7,7 @@ import Drinks from "../../models/menu/drinksModel.js";
 import Saucers from "../../models/menu/saucersModel.js";
 import Extras from "../../models/menu/extrasModel.js";
 import { targetsForProduct, extraFitsProduct } from "../extras/extraTargetsUtils.js";
+import { orderCode, normalizeOrderCode } from "../orders/orderCodeUtils.js";
 
 export const ACTIVE_ORDER_STATUSES = ["pending", "preparing", "ready", "atrasado"];
 
@@ -19,12 +20,15 @@ export const STATUS_LABELS = {
     cancelled: "Cancelado",
 };
 
-export const shortId = (id) => String(id).slice(-6).toUpperCase();
+// Código de orden ("AD27-01"): el mismo que ven la app y el panel. Recibe el
+// pedido; se conserva el nombre por los llamados existentes.
+export const shortId = (order) => orderCode(order);
 
 // Resumen corto de un pedido, para el chat y para la app.
 export const summarizeOrder = (order) => ({
     id: order._id,
-    shortId: shortId(order._id),
+    shortId: orderCode(order),
+    code: orderCode(order),
     status: order.status,
     statusLabel: STATUS_LABELS[order.status] || order.status,
     orderType: order.orderType,
@@ -36,7 +40,7 @@ export const summarizeOrder = (order) => ({
     driverMessages: (order.driverMessages || []).map((m) => ({ text: m.text, createdAt: m.createdAt })),
 });
 
-// Resuelve "mi pedido", "el de ayer" o un número corto (#A1B2C3) a un pedido
+// Resuelve "mi pedido", "el de ayer" o un código de orden (AD27-01) a un pedido
 // del cliente. Sin referencia: el activo más reciente, o el último entregado.
 export const findCustomerOrder = async (customerId, reference) => {
     const ref = String(reference || "").replace("#", "").trim().toLowerCase();
@@ -44,6 +48,9 @@ export const findCustomerOrder = async (customerId, reference) => {
         return Order.findOne({ _id: ref, customer: customerId });
     }
     const recent = await Order.find({ customer: customerId }).sort({ createdAt: -1 }).limit(30);
+    // Código de orden ("AD27-01"): el más reciente con ese código.
+    const code = normalizeOrderCode(reference);
+    if (code) return recent.find((o) => o.code === code) || null;
     if (/^[0-9a-f]{6}$/.test(ref)) {
         return recent.find((o) => String(o._id).slice(-6).toLowerCase() === ref) || null;
     }

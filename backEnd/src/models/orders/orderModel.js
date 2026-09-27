@@ -1,4 +1,5 @@
 import mongoose, { Schema, model } from "mongoose";
+import { nextOrderCode } from "../../utils/orders/orderCodeUtils.js";
 
 // Un producto dentro de un pedido (combo, extra o bebida), con los datos ya
 // "congelados" al momento de pedirse (nombre/precio) para que si el producto
@@ -41,6 +42,10 @@ const orderSchema = new Schema({
     enum: ['local', 'online'],
     required: true
   },
+  // Código de orden que ven todos: "AD27-01", "CL27-01", "PL27-01" (tipo +
+  // día + número del día). Se asigna solo al crear el pedido, ver hook abajo
+  // y utils/orders/orderCodeUtils.js.
+  code: { type: String, index: true },
 
   // --- Campos exclusivos de pedidos LOCALES (dine-in) ---
   table: {
@@ -171,6 +176,12 @@ const orderSchema = new Schema({
   // también maneje pedidos online. La colección física se queda llamándose
   // "orders" para no perder los pedidos ya existentes ni requerir mover datos.
   collection: "orders"
+});
+
+// El código se asigna al guardar por primera vez, ya sabiendo el tipo de
+// pedido (a domicilio, para llevar o en el local).
+orderSchema.pre("save", async function assignOrderCode() {
+  if (this.isNew && !this.code) this.code = await nextOrderCode(this, this.createdAt || new Date());
 });
 
 export default model("Order", orderSchema);

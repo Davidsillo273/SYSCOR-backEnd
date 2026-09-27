@@ -18,6 +18,8 @@ const invoiceSchema = new Schema({
     enum: ['local', 'online'],
     required: true
   },
+  // Código de orden del pedido ("AD27-01"), copiado para listarlo sin populate.
+  orderCode: { type: String },
 
   // Copia de los productos vendidos tal como estaban al momento de entregarse
   // (no una referencia), para que la factura no cambie si el pedido original

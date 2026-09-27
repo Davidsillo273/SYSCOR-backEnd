@@ -169,7 +169,7 @@ export const fileClaim = async ({ req, customerId, orderId, type, items, descrip
             customer: customerId,
             type: "claim_credit",
             amount,
-            description: `Reclamo del pedido ${walletOrderRef(order._id)}: ${CLAIM_TYPE_LABELS[type] || "reclamo"}`,
+            description: `Reclamo del pedido ${walletOrderRef(order)}: ${CLAIM_TYPE_LABELS[type] || "reclamo"}`,
             order: order._id,
             claim: claim._id,
         });
@@ -177,7 +177,7 @@ export const fileClaim = async ({ req, customerId, orderId, type, items, descrip
 
     // Lo que necesita a una persona le llega al panel.
     if (status === "in_review" || status === "pending_refund") {
-        const orderRef = String(order._id).slice(-6).toUpperCase();
+        const orderRef = walletOrderRef(order);
         await notificationUtils.createNotification({
             req,
             category: "orders",
@@ -185,11 +185,11 @@ export const fileClaim = async ({ req, customerId, orderId, type, items, descrip
             title: status === "in_review" ? "Reclamo por revisar" : "Reembolso pendiente",
             message: (actor) =>
                 status === "in_review"
-                    ? `${actor.name} reportó "${CLAIM_TYPE_LABELS[type]}" en el pedido #${orderRef}. Necesita revisión.`
-                    : `Panchita aprobó un reembolso de $${amount.toFixed(2)} a tarjeta para el pedido #${orderRef}. Hazlo desde el panel de Wompi y márcalo como reembolsado.`,
+                    ? `${actor.name} reportó "${CLAIM_TYPE_LABELS[type]}" en el pedido ${orderRef}. Necesita revisión.`
+                    : `Panchita aprobó un reembolso de $${amount.toFixed(2)} a tarjeta para el pedido ${orderRef}. Hazlo desde el panel de Wompi y márcalo como reembolsado.`,
             icon: "receipt",
             severity: "warning",
-            entity: { model: "Claim", id: claim._id, label: `Pedido #${orderRef}` },
+            entity: { model: "Claim", id: claim._id, label: `Pedido ${orderRef}` },
         });
     }
 

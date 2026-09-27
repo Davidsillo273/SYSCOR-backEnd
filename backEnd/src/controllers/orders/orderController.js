@@ -64,6 +64,7 @@ const generateInvoice = async (order) => {
   await Invoice.create({
     order: order._id,
     orderType: order.orderType,
+    orderCode: order.code,
     items: (order.items || []).map((i) => ({ name: i.name, price: i.price, quantity: i.quantity })),
     total: order.total,
     tableNumber: order.table?.number,
@@ -270,7 +271,7 @@ orderController.getMyOrders = async (req, res) => {
     if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
 
     const orders = await Order.find(filter)
-      .select('orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
+      .select('code orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
       .populate('table', 'number')
       .populate({ path: 'reservation', select: 'status reservedFor expiresAt partySize alias table checkedInAt', populate: { path: 'table' } })
       .sort({ createdAt: -1 });
@@ -464,7 +465,7 @@ orderController.cancelMyOrder = async (req, res) => {
     // Si iba a comer en el local, la mesa queda libre para alguien más.
     await cancelReservationOfOrder(order._id);
 
-    const ref = orderRef(order._id);
+    const ref = orderRef(order);
     if (toWallet > 0) {
       await creditWallet({
         customer: req.user.id,

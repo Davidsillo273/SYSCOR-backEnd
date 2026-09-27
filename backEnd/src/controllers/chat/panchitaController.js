@@ -14,7 +14,7 @@ import Claim from "../../models/orders/claimModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
 import { estimateOrder } from "../../utils/panchita/etaUtils.js";
 import { fileClaim, toPublicClaim, CLAIM_TYPE_LABELS } from "../../utils/panchita/claimPolicy.js";
-import { logWalletMovement, orderRef as walletOrderRef } from "../../utils/wallet/walletUtils.js";
+import { logWalletMovement } from "../../utils/wallet/walletUtils.js";
 import {
     ACTIVE_ORDER_STATUSES,
     STATUS_LABELS,
@@ -25,6 +25,7 @@ import {
     suggestDriverMessages,
 } from "../../utils/panchita/panchitaUtils.js";
 import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
+import { findOrderCode } from "../../utils/orders/orderCodeUtils.js";
 
 const panchitaController = {};
 
@@ -59,18 +60,22 @@ Reglas:
    una sola frase.
 4. Antes de enviar un mensaje al repartidor, asegúrate de que el texto sea
    claro; si el cliente ya lo dictó, envíalo sin preguntar de nuevo.
-5. No pidas ni repitas datos de tarjeta, contraseñas ni códigos.
+5. No pidas ni repitas datos de tarjeta, contraseñas ni códigos de acceso
+   (el código de orden del pedido sí se puede decir).
 6. Si el tema no tiene que ver con sus pedidos o el restaurante, reconduce
    con amabilidad.
 7. Responde SIEMPRE en español, cálida y breve (1 a 3 frases). Trata al
    cliente de "tú" (nunca de "vos"), igual que el resto de la app.
-   Usa el número corto del pedido (#ABC123) cuando hables de uno.`;
+   Cuando hables de un pedido, usa su código de orden tal cual (ej. AD27-01,
+   CL27-01, PL27-01): es el mismo que el cliente ve en la app.
+8. Si el mensaje empieza con [Pedido: CÓDIGO], el cliente eligió ese pedido
+   como tema de la conversación: úsalo en las herramientas salvo que diga otro.`;
 
 // ── HERRAMIENTAS ─────────────────────────────────────────────────────────
 
 const PEDIDO_PARAM = {
     type: "string",
-    description: "Número corto del pedido (ej. A1B2C3). Omítelo para usar el pedido en curso o el más reciente.",
+    description: "Código de orden del pedido (ej. AD27-01, CL27-01 o PL27-01). Omítelo para usar el pedido en curso o el más reciente.",
 };
 
 const TOOLS = {
@@ -97,17 +102,17 @@ const TOOLS = {
             parameters: { type: "object", properties: { pedido: PEDIDO_PARAM } },
         },
         run: async (args, ctx) => {
-            const order = await findCustomerOrder(ctx.customerId, args.pedido);
+            const order = await findCustomerOrder(ctx.customerId, args.pedido || ctx.contextOrderCode);
             if (!order) return { success: false, message: "El cliente no tiene pedidos." };
             if (!ACTIVE_ORDER_STATUSES.includes(order.status)) {
-                return { success: false, message: `El pedido #${shortId(order._id)} ya está ${STATUS_LABELS[order.status]?.toLowerCase()}.` };
+                return { success: false, message: `El pedido ${shortId(order)} ya está ${STATUS_LABELS[order.status]?.toLowerCase()}.` };
             }
             const eta = await estimateOrder(order);
             if (!eta) return { success: false, message: "Ese pedido no se puede rastrear (se hizo en el local)." };
             ctx.cards.push({ type: "eta", order: summarizeOrder(order), eta });
             return {
                 success: true,
-                pedido: shortId(order._id),
+                pedido: shortId(order),
                 minutos: eta.minutes,
                 ventana: eta.window,
                 horaAproximada: eta.arrivalAt,
@@ -151,7 +156,7 @@ const TOOLS = {
             },
         },
         run: async (args, ctx) => {
-            const order = await findCustomerOrder(ctx.customerId, args.pedido);
+            const order = await findCustomerOrder(ctx.customerId, args.pedido || ctx.contextOrderCode);
             if (!order) return { success: false, message: "No encontré pedidos en la cuenta del cliente." };
             const result = await fileClaim({
                 req: ctx.req,
@@ -164,7 +169,7 @@ const TOOLS = {
             });
             if (result.error) return { success: false, message: result.error };
             const claim = toPublicClaim(result.claim);
-            ctx.cards.push({ type: "claim", claim, orderShortId: shortId(order._id) });
+            ctx.cards.push({ type: "claim", claim, orderShortId: shortId(order) });
             return {
                 success: true,
                 yaExistia: !result.created,
@@ -186,11 +191,11 @@ const TOOLS = {
             },
         },
         run: async (args, ctx) => {
-            const order = await findCustomerOrder(ctx.customerId, args.pedido);
+            const order = await findCustomerOrder(ctx.customerId, args.pedido || ctx.contextOrderCode);
             const result = await sendDriverMessage(order, args.mensaje, false);
             if (result.error) return { success: false, message: result.error };
-            ctx.cards.push({ type: "driver_message", orderShortId: shortId(order._id), text: result.text });
-            return { success: true, enviado: result.text, pedido: shortId(order._id) };
+            ctx.cards.push({ type: "driver_message", orderShortId: shortId(order), text: result.text });
+            return { success: true, enviado: result.text, pedido: shortId(order) };
         },
     },
 
@@ -226,7 +231,7 @@ const TOOLS = {
         run: async (_args, ctx) => {
             const [customer, claims] = await Promise.all([
                 CustomerModel.findById(ctx.customerId).select("wallet").lean(),
-                Claim.find({ customer: ctx.customerId }).sort({ createdAt: -1 }).limit(5),
+                Claim.find({ customer: ctx.customerId }).populate("order", "code").sort({ createdAt: -1 }).limit(5),
             ]);
             return {
                 success: true,
@@ -258,7 +263,7 @@ const sendDriverMessage = async (order, rawText, preset) => {
         return { error: "Ese pedido no es a domicilio, así que no lleva repartidor." };
     }
     if (!ACTIVE_ORDER_STATUSES.includes(order.status)) {
-        return { error: `El pedido #${shortId(order._id)} ya no está en camino.` };
+        return { error: `El pedido ${shortId(order)} ya no está en camino.` };
     }
     const text = String(rawText || "").replace(/\s+/g, " ").trim().slice(0, 200);
     if (text.length < 2) return { error: "El mensaje está vacío." };
@@ -271,7 +276,7 @@ const sendDriverMessage = async (order, rawText, preset) => {
 
     const payload = {
         orderId: order._id,
-        shortId: shortId(order._id),
+        shortId: shortId(order),
         deliveryAddress: order.deliveryAddress,
         message,
     };
@@ -326,7 +331,10 @@ panchitaController.resetConversation = async (req, res) => {
     }
 };
 
-// POST /panchita/chat — { message }. Responde { reply, cards }.
+// POST /panchita/chat — { message, orderId? }. Responde { reply, cards }.
+// `orderId` es el pedido que el cliente eligió arriba del chat como tema de
+// la conversación: se le indica a Gemini con su código y las herramientas
+// lo usan cuando no se menciona otro.
 panchitaController.chat = async (req, res) => {
     const message = String(req.body?.message || "").trim();
     if (!message) return res.status(400).json({ title: "Mensaje vacío", message: "Escríbele algo a Panchita." });
@@ -342,8 +350,16 @@ panchitaController.chat = async (req, res) => {
         const customer = await CustomerModel.findById(req.user.id).select("personalInfo.name").lean();
         const systemPrompt = `${SYSTEM_PROMPT}\n\nEl cliente se llama ${customer?.personalInfo?.name || "cliente"}. Fecha y hora actual: ${new Date().toISOString()} (El Salvador es UTC-6).`;
 
-        const contents = [...(conversation.contents || []), { role: "user", parts: [{ text: message }] }];
-        const ctx = { req, customerId: req.user.id, cards: [] };
+        let contextOrderCode = null;
+        const contextOrderId = String(req.body?.orderId || "");
+        if (/^[0-9a-f]{24}$/.test(contextOrderId)) {
+            const contextOrder = await Order.findOne({ _id: contextOrderId, customer: req.user.id }).select("code").lean();
+            if (contextOrder) contextOrderCode = shortId(contextOrder);
+        }
+        const modelText = contextOrderCode ? `[Pedido: ${contextOrderCode}] ${message}` : message;
+
+        const contents = [...(conversation.contents || []), { role: "user", parts: [{ text: modelText }] }];
+        const ctx = { req, customerId: req.user.id, cards: [], contextOrderCode };
         const declarations = panchitaToolDeclarations();
 
         let reply = null;
@@ -400,7 +416,7 @@ panchitaController.chat = async (req, res) => {
 // Avisos que Panchita da por su cuenta. Cada uno lleva una `key` estable para
 // que la app no repita el mismo aviso en cada consulta.
 const buildAlerts = (order, eta) => {
-    const ref = `#${shortId(order._id)}`;
+    const ref = shortId(order);
     const alerts = [];
     const statusText = {
         preparing: `¡Ya están preparando tu pedido ${ref}! 🌮`,
@@ -454,7 +470,7 @@ panchitaController.getOverview = async (req, res) => {
                 alerts.push({
                     key: `claim:${claim._id}:${claim.status}`,
                     level: claim.status === "rejected" ? "warning" : "info",
-                    text: `Tu reclamo del pedido #${shortId(claim.order)}: ${claim.reason || claim.status}`,
+                    text: `Tu reclamo del pedido ${await findOrderCode(claim.order)}: ${claim.reason || claim.status}`,
                 });
             }
         }
@@ -570,7 +586,7 @@ panchitaController.resolveClaim = async (req, res) => {
                 customer: claim.customer,
                 type: "claim_credit",
                 amount: finalAmount,
-                description: `Reclamo del pedido ${walletOrderRef(claim.order)} aprobado por el equipo`,
+                description: `Reclamo del pedido ${await findOrderCode(claim.order)} aprobado por el equipo`,
                 order: claim.order,
                 claim: claim._id,
             });

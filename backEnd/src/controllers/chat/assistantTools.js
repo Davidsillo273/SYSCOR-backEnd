@@ -20,6 +20,7 @@ import Invoice from "../../models/orders/invoiceModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
 import { findByNameInsensitive } from "../../utils/common/duplicateNameUtils.js";
 import { SAUCER_CATEGORIES } from "../../utils/saucers/saucerCategoriesUtils.js";
+import { normalizeOrderCode } from "../../utils/orders/orderCodeUtils.js";
 
 const MENU_MODELS = {
   dish: { model: SaucersModel, label: "platillo", permission: "dishes" },
@@ -126,7 +127,7 @@ const getOrders = {
       success: true,
       orders: orders.map((o) => ({
         id: o._id,
-        shortId: String(o._id).slice(-4).toUpperCase(),
+        code: o.code || String(o._id).slice(-6).toUpperCase(),
         orderType: o.orderType,
         status: o.status,
         total: o.total,
@@ -408,11 +409,11 @@ const updateTableStatus = {
 const updateOrderStatus = {
   declaration: {
     name: "update_order_status",
-    description: "Cambia el estado de un pedido (identificado por los últimos 4 caracteres de su ID, visibles en Pedidos y Órdenes).",
+    description: "Cambia el estado de un pedido (identificado por su código de orden, ej. AD27-01, visible en Pedidos y Órdenes).",
     parameters: {
       type: "OBJECT",
       properties: {
-        orderShortId: { type: "STRING", description: "Últimos 4 caracteres del ID del pedido" },
+        orderShortId: { type: "STRING", description: "Código de orden del pedido, ej. AD27-01, CL27-01 o PL27-01" },
         status: { type: "STRING", enum: ["pending", "preparing", "ready", "delivered", "cancelled"] },
       },
       required: ["orderShortId", "status"],
@@ -420,15 +421,15 @@ const updateOrderStatus = {
   },
   permission: "orders",
   formFields: [
-    { name: "orderShortId", label: "ID corto del pedido", type: "text", required: true },
+    { name: "orderShortId", label: "Código de orden (ej. AD27-01)", type: "text", required: true },
     { name: "status", label: "Nuevo estado", type: "select", required: true, options: ["pending", "preparing", "ready", "delivered", "cancelled"] },
   ],
   run: async (args) => {
-    const shortId = String(args.orderShortId || "").trim().toUpperCase();
-    if (shortId.length < 3) return { success: false, message: "Necesito al menos los últimos 4 caracteres del ID del pedido." };
-    const candidates = await Order.find({ status: { $ne: "delivered" } }).select("_id status").limit(200).lean();
-    const match = candidates.find((o) => String(o._id).slice(-4).toUpperCase() === shortId);
-    if (!match) return { success: false, message: `No encontré ningún pedido activo que termine en "${shortId}".` };
+    const shortId = normalizeOrderCode(args.orderShortId);
+    if (!shortId) return { success: false, message: "Necesito el código de orden, por ejemplo AD27-01." };
+    // El día del código se repite cada mes: gana el pedido activo más reciente.
+    const match = await Order.findOne({ code: shortId, status: { $ne: "delivered" } }).sort({ createdAt: -1 }).select("_id status").lean();
+    if (!match) return { success: false, message: `No encontré ningún pedido activo con el código ${shortId}.` };
     await Order.findByIdAndUpdate(match._id, { $set: { status: args.status }, $push: { statusHistory: { status: args.status, changedAt: new Date() } } });
     return { success: true, order: { shortId, status: args.status } };
   },

@@ -19,7 +19,7 @@ const walletMovementSchema = new Schema(
             required: true,
         },
         amount: { type: Number, required: true },
-        // Texto para el cliente: "Pago del pedido #A1B2C".
+        // Texto para el cliente: "Pago del pedido AD27-01".
         description: { type: String, maxlength: 200 },
         order: { type: Schema.Types.ObjectId, ref: "Order", default: null },
         checkout: { type: Schema.Types.ObjectId, ref: "Checkout", default: null },
