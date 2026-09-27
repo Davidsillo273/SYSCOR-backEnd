@@ -27,6 +27,7 @@ import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTar
 import { includedDrinksOf, drinkSurchargeFor, HOUSE_DRINK_CATEGORY } from "../../utils/drinks/drinkUpgradeUtils.js";
 import { logWalletMovement } from "../../utils/wallet/walletUtils.js";
 import Reservation from "../../models/tables/reservationModel.js";
+import { isOnHold, emitOrder } from "../../utils/orders/orderHoldUtils.js";
 import {
     validateReservationTime,
     tablesForSlot,
@@ -221,6 +222,7 @@ const publicCheckout = (checkout) => ({
     chargeAmount: checkout.chargeAmount,
     orderId: checkout.order || null,
     fulfillment: checkout.fulfillment || (checkout.isDelivery ? "delivery" : "pickup"),
+    addToOrder: checkout.addToOrder || null,
     message: checkout.wompi?.message || null,
 });
 
@@ -258,6 +260,8 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
         { new: true },
     );
     if (!checkout) return Checkout.findById(checkoutId);
+
+    if (checkout.addToOrder) return appendToOrderFromCheckout(checkout, transaction);
 
     try {
         const customer = await CustomerModel.findById(checkout.customer).select("personalInfo loginInfo.email");
@@ -335,6 +339,56 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
         console.error("checkoutController.createOrderFromCheckout:", error);
         checkout.status = "error";
         checkout.set("wompi.message", "Pago aprobado, pero el pedido no se pudo registrar. Contacta a soporte.");
+        await checkout.save();
+        return checkout;
+    }
+};
+
+// "Agregar más productos": el pago se aprobó, así que los productos se suman
+// al pedido original (con addedAt, para que cocina los distinga), sube el
+// total y termina la pausa: el pedido vuelve a la cola en su lugar.
+const appendToOrderFromCheckout = async (checkout, transaction) => {
+    try {
+        const now = new Date();
+        const order = await Order.findOneAndUpdate(
+            { _id: checkout.addToOrder, customer: checkout.customer },
+            {
+                $push: {
+                    items: { $each: checkout.items.map((item) => ({ ...item.toObject(), addedAt: now })) },
+                    additions: {
+                        checkout: checkout._id,
+                        amount: checkout.chargeAmount,
+                        creditApplied: checkout.creditApplied || 0,
+                        transactionId: checkout.wompi?.transactionId || null,
+                        subtotal: checkout.subtotal,
+                        at: now,
+                    },
+                },
+                $inc: { total: checkout.subtotal },
+                $set: { "hold.active": false, "hold.releasedAt": now, "hold.releasedBy": "added" },
+            },
+            { new: true },
+        );
+        if (!order) throw new Error("Pedido original no encontrado");
+
+        checkout.status = "approved";
+        checkout.order = order._id;
+        checkout.set("wompi.authorizationCode", transaction.codigoAutorizacion || null);
+        checkout.set("wompi.message", null);
+        await checkout.save();
+        try {
+            await savePendingCard(checkout);
+        } catch (error) {
+            console.error("checkoutController.savePendingCard:", error.message);
+        }
+        await Checkout.updateOne({ _id: checkout._id }, { $unset: { pendingCard: 1 } });
+
+        await emitOrder(order._id);
+        return checkout;
+    } catch (error) {
+        console.error("checkoutController.appendToOrderFromCheckout:", error);
+        checkout.status = "error";
+        checkout.set("wompi.message", "Pago aprobado, pero no se pudo sumar a tu pedido. Contacta a soporte.");
         await checkout.save();
         return checkout;
     }
@@ -432,9 +486,25 @@ const describeStartError = (error) => {
 // POST /payments/checkout
 checkoutController.createCheckout = async (req, res) => {
     try {
-        const { items: cartItems, deliveryAddress, card, saveCard, useCredit, dineIn } = req.body || {};
+        const { items: cartItems, deliveryAddress, card, saveCard, useCredit, dineIn, addToOrder } = req.body || {};
+
+        // "Agregar más productos": el pedido debe ser del cliente y seguir en
+        // su tiempo para agregar. La forma de entrega es la del pedido original.
+        let targetOrder = null;
+        if (addToOrder) {
+            targetOrder = await Order.findOne({ _id: addToOrder, customer: req.user.id, orderType: "online" });
+            if (!targetOrder || targetOrder.status !== "pending" || !isOnHold(targetOrder)) {
+                return res.status(409).json({
+                    title: "Se acabó el tiempo",
+                    message: "Ya no se pueden agregar productos a ese pedido. Si deseas algo más, por favor realiza otro pedido.",
+                    addWindowClosed: true,
+                });
+            }
+        }
         // Las versiones anteriores de la app solo mandan isDelivery.
-        const fulfillment = FULFILLMENTS.includes(req.body?.fulfillment)
+        const fulfillment = targetOrder
+            ? targetOrder.fulfillment || (targetOrder.isDelivery ? "delivery" : "pickup")
+            : FULFILLMENTS.includes(req.body?.fulfillment)
             ? req.body.fulfillment
             : req.body?.isDelivery
                 ? "delivery"
@@ -446,7 +516,7 @@ checkoutController.createCheckout = async (req, res) => {
 
         // Comer en el local: hora dentro del horario y que haya mesa, antes de cobrar.
         let dineInData;
-        if (fulfillment === "dine_in") {
+        if (fulfillment === "dine_in" && !targetOrder) {
             const timeError = validateReservationTime(dineIn?.reservedFor);
             if (timeError) return res.status(400).json({ title: "Revisa la hora", message: timeError });
             const partySize = Number(dineIn?.partySize);
@@ -465,7 +535,7 @@ checkoutController.createCheckout = async (req, res) => {
             };
         }
 
-        if (isDelivery && (!deliveryAddress || String(deliveryAddress).trim().length < 5)) {
+        if (!targetOrder && isDelivery && (!deliveryAddress || String(deliveryAddress).trim().length < 5)) {
             return res.status(400).json({ title: "Falta la dirección", message: "Elige a dónde llevamos tu pedido." });
         }
 
@@ -516,7 +586,12 @@ checkoutController.createCheckout = async (req, res) => {
             isDelivery,
             fulfillment,
             dineIn: dineInData,
-            deliveryAddress: isDelivery ? String(deliveryAddress).trim() : undefined,
+            addToOrder: targetOrder?._id || null,
+            deliveryAddress: targetOrder
+                ? targetOrder.deliveryAddress || undefined
+                : isDelivery
+                    ? String(deliveryAddress).trim()
+                    : undefined,
             pendingCard: saveCard && resolved.newCard ? resolved.newCard : undefined,
         });
         if (creditApplied > 0) {

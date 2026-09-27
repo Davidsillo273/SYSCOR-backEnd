@@ -70,6 +70,9 @@ const checkoutSchema = new Schema(
             expiryYear: Number,
         },
         order: { type: Schema.Types.ObjectId, ref: "Order", default: null },
+        // "Agregar más productos": pedido al que se suman estos productos al
+        // aprobarse el pago (en vez de crear un pedido nuevo).
+        addToOrder: { type: Schema.Types.ObjectId, ref: "Order", default: null },
     },
     { timestamps: true },
 );

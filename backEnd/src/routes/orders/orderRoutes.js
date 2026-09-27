@@ -154,8 +154,8 @@ router.post("/:id/customer-cancel", validateAuthCookie(["customer"]), orderContr
  * @swagger
  * /orders/{id}/hold:
  *   post:
- *     summary: El cliente pone su pedido en espera
- *     description: Cliente. Solo mientras el pedido siga recibido (pending) y una vez por pedido. Dura 10 minutos; al terminar vuelve solo a la cola en su mismo lugar. Mientras tanto, cocina no lo puede empezar.
+ *     summary: El cliente empieza a agregar productos a su pedido
+ *     description: Cliente. Pausa el pedido 10 minutos para sumarle productos y pagarlos (POST /payments/checkout con addToOrder). Solo mientras siga recibido (pending) y una vez por pedido. Mientras tanto, cocina no lo puede empezar; si no paga a tiempo, vuelve solo a la cola en su mismo lugar.
  *     tags: [Pedidos]
  *     security: [{ cookieAuth: [] }]
  *     parameters:
@@ -172,7 +172,7 @@ router.post("/:id/customer-cancel", validateAuthCookie(["customer"]), orderContr
  *         description: Cocina lo empezó en ese instante.
  * /orders/{id}/resume:
  *   post:
- *     summary: El cliente reanuda su pedido en espera
+ *     summary: El cliente deja de agregar productos (el pedido vuelve a la cola)
  *     tags: [Pedidos]
  *     security: [{ cookieAuth: [] }]
  *     parameters:

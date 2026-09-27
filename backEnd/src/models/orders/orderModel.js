@@ -19,7 +19,9 @@ const orderItemSchema = new Schema({
   name: String,
   price: Number,
   quantity: { type: Number, default: 1 },
-  notes: String
+  notes: String,
+  // Se agregó después de hacer el pedido ("Agregar más productos" en la app).
+  addedAt: { type: Date }
 });
 
 // ORDER: el registro operativo de un pedido mientras se está preparando y
@@ -116,6 +118,18 @@ const orderSchema = new Schema({
     checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
   },
 
+  // Cobros de productos agregados después ("Agregar más productos").
+  additions: [
+    {
+      checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
+      amount: { type: Number },
+      creditApplied: { type: Number, default: 0 },
+      transactionId: { type: String },
+      subtotal: { type: Number },
+      at: { type: Date, default: Date.now },
+    }
+  ],
+
   // Mensajes del cliente para el repartidor (ej. "Déjalo en la recepción").
   // Los manda desde la app, con un toque o escritos por él.
   driverMessages: [
@@ -148,15 +162,17 @@ const orderSchema = new Schema({
     enum: ['pending', 'preparing', 'ready', 'delivered', 'cancelled', 'atrasado'],
     default: 'pending'
   },
-  // "En espera": el cliente pausó el pedido mientras seguía "Recibido" (ver
-  // utils/orders/orderHoldUtils.js). Una sola vez por pedido y por 10 min.
+  // "Agregar más productos": el cliente pausó el pedido mientras seguía
+  // "Recibido" para sumarle productos (ver utils/orders/orderHoldUtils.js).
+  // Una sola vez por pedido y por 10 min.
   hold: {
     active: { type: Boolean, default: false },
     startedAt: { type: Date },
     until: { type: Date },
     used: { type: Boolean, default: false },
     releasedAt: { type: Date },
-    releasedBy: { type: String, enum: ['customer', 'timeout', 'cancelled'] },
+    // customer = lo reanudó sin agregar, added = pagó lo agregado, timeout = se acabó el tiempo
+    releasedBy: { type: String, enum: ['customer', 'added', 'timeout', 'cancelled'] },
   },
 
   // Cancelación hecha por el cliente desde la app (solo mientras el pedido

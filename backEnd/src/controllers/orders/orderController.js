@@ -16,7 +16,7 @@ import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
 import { cancelReservationOfOrder, syncReservations, publicTable } from "../../utils/tables/reservationUtils.js";
-import { HOLD_MS, isOnHold, canHold, publicHold, notOnHoldFilter, releaseExpiredHolds, emitOrder } from "../../utils/orders/orderHoldUtils.js";
+import { HOLD_MS, canHold, publicHold, notOnHoldFilter, releaseExpiredHolds, emitOrder } from "../../utils/orders/orderHoldUtils.js";
 
 const orderController = {};
 
@@ -326,16 +326,20 @@ orderController.updateOrderStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid status" });
     }
 
+    // "Agregar más productos": primero se liberan las pausas vencidas, para que
+    // un pedido cuyo tiempo ya terminó se pueda cocinar de inmediato.
+    if (status === 'preparing') await releaseExpiredHolds();
+
     const previousOrder = await Order.findById(req.params.id).select("status hold");
     if (!previousOrder) return res.status(404).json({ message: "Order not found" });
 
-    // "En espera": el cliente pausó el pedido; cocina no lo empieza hasta que
-    // lo reanude o pasen los 10 minutos.
+    // El cliente está agregando productos: cocina no lo empieza hasta que
+    // pague lo agregado, lo deje o pasen los 10 minutos.
     const startsKitchen = status === 'preparing' && previousOrder.status === 'pending';
-    if (startsKitchen && isOnHold(previousOrder)) {
+    if (startsKitchen && previousOrder.hold?.active) {
       return res.status(409).json({
-        title: "Pedido en espera",
-        message: "El cliente puso este pedido en espera. Vuelve a la cola solo en unos minutos; mientras, sigue con el siguiente.",
+        title: "Cliente agregando productos",
+        message: "El cliente está agregando productos a este pedido. Vuelve a la cola en unos minutos; mientras, sigue con el siguiente.",
       });
     }
 
@@ -358,7 +362,7 @@ orderController.updateOrderStatus = async (req, res) => {
      .populate('waiter', 'name lastname')
      .populate('customer', 'personalInfo');
     if (!order) {
-      return res.status(409).json({ title: "Pedido en espera", message: "El cliente acaba de poner este pedido en espera." });
+      return res.status(409).json({ title: "Cliente agregando productos", message: "El cliente acaba de empezar a agregar productos a este pedido." });
     }
 
     // Facturar solo la primera vez que llega a "delivered" (evita duplicar
@@ -560,16 +564,17 @@ orderController.cancelMyOrder = async (req, res) => {
   }
 };
 
-// POST /orders/:id/hold — el cliente pone su pedido "En espera" (10 min).
+// POST /orders/:id/hold — "Agregar más productos": el cliente pausa su pedido
+// 10 min para sumarle productos y pagarlos (ver orderHoldUtils).
 orderController.holdMyOrder = async (req, res) => {
   try {
     const current = await Order.findOne({ _id: req.params.id, customer: req.user.id });
     if (!current) return res.status(404).json({ title: "Pedido no encontrado", message: "No encontramos ese pedido." });
     if (!canHold(current)) {
       return res.status(400).json({
-        title: "No se puede poner en espera",
+        title: "No se pueden agregar productos",
         message: current.hold?.used
-          ? "Este pedido ya estuvo en espera una vez."
+          ? "Ya agregaste productos a este pedido una vez. Si deseas algo más, realiza otro pedido."
           : "Solo se puede mientras el pedido no haya entrado a cocina.",
       });
     }
@@ -589,17 +594,18 @@ orderController.holdMyOrder = async (req, res) => {
 
     await emitOrder(updated._id);
     return res.status(200).json({
-      title: "Pedido en espera",
-      message: "Tu pedido está en espera por 10 minutos. Si no lo reanudas antes, vuelve solo a la cola en su mismo lugar.",
+      title: "Agrega tus productos",
+      message: "Tienes 10 minutos para agregar productos y pagarlos. Mientras, cocina espera tu pedido.",
       hold: publicHold(updated),
     });
   } catch (error) {
     console.error("orderController.holdMyOrder:", error);
-    return res.status(500).json({ title: "Error del servidor", message: "No se pudo poner en espera el pedido." });
+    return res.status(500).json({ title: "Error del servidor", message: "No se pudo empezar a agregar productos." });
   }
 };
 
-// POST /orders/:id/resume — el cliente reanuda su pedido antes de tiempo.
+// POST /orders/:id/resume — el cliente ya no quiere agregar nada: el pedido
+// vuelve a la cola sin esperar los 10 minutos.
 orderController.resumeMyOrder = async (req, res) => {
   try {
     const updated = await Order.findOneAndUpdate(

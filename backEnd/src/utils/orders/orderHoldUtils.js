@@ -1,5 +1,8 @@
-// "En espera": el cliente pausa su pedido en línea mientras sigue "Recibido"
-// (por ejemplo, para pensar si agrega algo o si alguien más va a pedir).
+// "Agregar más productos": el cliente pausa su pedido en línea mientras sigue
+// "Recibido" para sumarle productos y pagarlos. Lo agregado vive en el
+// carrito de la app hasta que se paga; entonces checkoutController lo suma
+// al mismo pedido y la pausa termina. Si no paga a tiempo, la app borra lo
+// agregado (en el servidor no hay nada que borrar).
 //
 // Reglas:
 //   - Solo mientras el pedido está en "pending" y es en línea.
@@ -11,10 +14,13 @@
 //     en la cola (se ordena por fecha de creación), así el cliente no pierde
 //     turno por pausar.
 import Order from "../../models/orders/orderModel.js";
+import Checkout from "../../models/orders/checkoutModel.js";
 import notificationUtils from "../notifications/notificationUtils.js";
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 
 export const HOLD_MS = 10 * 60 * 1000;
+// Margen extra para un pago de lo agregado que ya empezó cuando se acabó el tiempo.
+const PAYMENT_GRACE_MS = 5 * 60 * 1000;
 
 const ORDERS_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.orders;
 
@@ -33,11 +39,12 @@ export const publicHold = (order) => ({
     used: !!order.hold?.used,
 });
 
-// Filtro de Mongo para "no está en espera" (sirve para cambiar el estado de
-// forma atómica: si el cliente pausa en el mismo instante, no se cocina).
-export const notOnHoldFilter = (now = new Date()) => ({
-    $or: [{ "hold.active": { $ne: true } }, { "hold.until": { $lte: now } }],
-});
+// Filtro de Mongo para "cocina lo puede empezar" (sirve para cambiar el
+// estado de forma atómica: si el cliente pausa en el mismo instante, no se
+// cocina). Usa la marca guardada y no la hora: una pausa vencida sigue
+// bloqueando si el pago de lo agregado va en curso (releaseExpiredHolds la
+// deja activa unos minutos más).
+export const notOnHoldFilter = () => ({ "hold.active": { $ne: true } });
 
 export const emitOrder = async (orderId) => {
     const populated = await Order.findById(orderId)
@@ -54,6 +61,14 @@ export const releaseExpiredHolds = async () => {
     const now = new Date();
     const expired = await Order.find({ "hold.active": true, "hold.until": { $lte: now } }).select("_id");
     for (const { _id } of expired) {
+        // Si el pago de lo agregado va en curso (verificación del banco), se
+        // espera hasta PAYMENT_GRACE_MS más para no cocinar sin lo agregado.
+        const paying = await Checkout.exists({
+            addToOrder: _id,
+            status: { $in: ["pending", "processing"] },
+            createdAt: { $gte: new Date(now.getTime() - PAYMENT_GRACE_MS) },
+        });
+        if (paying) continue;
         const updated = await Order.findOneAndUpdate(
             { _id, "hold.active": true },
             { $set: { "hold.active": false, "hold.releasedAt": now, "hold.releasedBy": "timeout" } },
