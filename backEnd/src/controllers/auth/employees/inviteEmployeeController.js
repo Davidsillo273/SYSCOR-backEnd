@@ -8,6 +8,10 @@ import { config } from "../../../../config.js";
 import { isValidPermission } from "../../../constants/permissions.js";
 import { ensureAccessCodeIfNeeded } from "../../../utils/users/accessCodeUtils.js";
 import { calculatePayrollDeductions } from "../../../utils/users/payrollUtils.js";
+import {
+  validateDui, normalizeDui, validateEmployeePhone, normalizeEmployeePhone, validateIsss,
+  validateAfpInstitution, validateBankAccount, validateLegalSchedule,
+} from "../../../utils/users/employeeFieldValidations.js";
 
 const inviteEmployeeController = {};
 
@@ -43,7 +47,6 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
     // Identificadores de ley: pueden venir vacíos a propósito, ver más abajo
     isssNumber,
     afpInstitution,
-    afpNumber,
     bankName,
     bankAccount,
     // Documentos ya subidos a Cloudinary en pasos previos del asistente
@@ -55,11 +58,16 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
     () => utils.validateEmail(email),
     () => utils.validateName(name, "El nombre"),
     () => utils.validateName(lastname, "El apellido"),
-    () => utils.validatePhone(phone),
+    () => validateEmployeePhone(phone),
+    () => validateDui(duiNit),
     () => utils.validateAddress(address),
     () => invitationValidationsUtils.validateEmployeeType(type),
     () => utils.validatePositiveNumber(salary, "El salario"),
     () => (additionalPay !== undefined ? utils.validatePositiveNumber(additionalPay, "El pago adicional") : { valid: true }),
+    () => validateIsss(isssNumber),
+    () => validateAfpInstitution(afpInstitution),
+    () => validateBankAccount(bankName, bankAccount),
+    () => validateLegalSchedule({ workDays, scheduleStart, scheduleEnd }),
     () =>
       permissions === undefined || (Array.isArray(permissions) && permissions.every(isValidPermission))
         ? { valid: true }
@@ -111,8 +119,8 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
         personalInfo: {
           name: name.trim(),
           lastname: lastname.trim(),
-          phone: phone.trim(),
-          duiNit: duiNit.trim(),
+          phone: normalizeEmployeePhone(phone),
+          duiNit: normalizeDui(duiNit),
           address: address.trim(),
           type,
           // Datos del DUI: van en el token para que el empleado no pueda
@@ -139,7 +147,6 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
           // alguien los complete.
           isssNumber: isssNumber?.trim() || null,
           afpInstitution: afpInstitution || null,
-          afpNumber: afpNumber?.trim() || null,
           bankName: bankName?.trim() || null,
           bankAccount: bankAccount?.trim() || null,
         },
