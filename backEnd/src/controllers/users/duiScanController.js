@@ -157,6 +157,33 @@ duiScanController.getCaptureSession = async (req, res) => {
 };
 
 /**
+ * Estado de una sesión, para la computadora que la abrió (autenticada).
+ *
+ * Es el respaldo del aviso por socket: la PC pregunta cada pocos segundos si
+ * el teléfono ya subió las fotos. Así la pantalla avanza aunque el socket no
+ * esté conectado (ej. la cookie no viajó entre dominios en producción).
+ */
+duiScanController.getSessionStatus = async (req, res) => {
+  try {
+    const session = await DuiCaptureSession.findOne({ token: req.params.token }).select("createdBy status front back");
+    if (!session) {
+      return res.status(404).json({ title: "Sesión vencida", message: "El código venció. Genera uno nuevo." });
+    }
+    if (String(session.createdBy) !== String(req.user.id)) {
+      return res.status(403).json({ title: "Sesión ajena", message: "Esta sesión de captura pertenece a otro usuario." });
+    }
+    return res.status(200).json({
+      status: session.status,
+      front: session.front?.url ? { url: session.front.url, publicId: session.front.publicId } : null,
+      back: session.back?.url ? { url: session.back.url, publicId: session.back.publicId } : null,
+    });
+  } catch (error) {
+    console.error("duiScanController.getSessionStatus:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "No se pudo consultar la sesión." });
+  }
+};
+
+/**
  * El teléfono sube las fotos del DUI a una sesión abierta.
  *
  * Pública (sin sesión) por la misma razón: el acceso lo da el token del QR,

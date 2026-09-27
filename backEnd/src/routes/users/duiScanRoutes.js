@@ -88,6 +88,29 @@ router.route("/session/:token/scan").post(...guard, duiScanController.scanFromSe
 
 /**
  * @swagger
+ * /users/dui-scan/session/{token}:
+ *   get:
+ *     summary: Estado de una sesión de captura del DUI
+ *     description: Solo quien abrió la sesión. La computadora la consulta cada pocos segundos como respaldo del aviso por socket; devuelve si el teléfono ya subió las fotos y sus URLs.
+ *     tags: [Escaneo DUI]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: token
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: "{ status: pending|uploaded|consumed, front, back }"
+ *       403:
+ *         description: La sesión es de otro usuario.
+ *       404:
+ *         description: La sesión venció.
+ */
+router.route("/session/:token").get(...guard, duiScanController.getSessionStatus);
+
+/**
+ * @swagger
  * /users/dui-scan/documents:
  *   post:
  *     summary: Sube los documentos sueltos del expediente del empleado

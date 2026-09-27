@@ -74,9 +74,13 @@ export const detectCardBrand = (digits) => {
     if (/^4/.test(digits)) return "VISA";
     if (/^(5[1-5]|2(2[2-9]|[3-6]\d|7[01]|720))/.test(digits)) return "MASTERCARD";
     if (/^3[47]/.test(digits)) return "AMEX";
-    if (/^3(0[0-5]|[68])/.test(digits)) return "DINERS";
+    if (/^3(0[0-5]|[689])/.test(digits)) return "DINERS";
     return "OTHER";
 };
+
+// Dígitos que tiene cada marca (las mismas reglas que la app, en
+// apps/customer/src/utils/cardUtils.js). OTHER cubre Discover.
+const CARD_LENGTHS = { VISA: [16], MASTERCARD: [16], AMEX: [15], DINERS: [14, 16], OTHER: [16] };
 
 const isValidLuhn = (digits) => {
     let sum = 0;
@@ -102,8 +106,12 @@ export const validateCardInput = ({ cardHolder, cardNumber, expiryMonth, expiryY
     if (!cardHolder || typeof cardHolder !== "string" || cardHolder.trim().length < 3) {
         return { valid: false, message: "Escribe el nombre tal como aparece en la tarjeta." };
     }
-    if (digits.length < 15 || digits.length > 19 || !isValidLuhn(digits)) {
-        return { valid: false, message: "El número de tarjeta no es válido." };
+    const brand = detectCardBrand(digits);
+    if (!CARD_LENGTHS[brand].includes(digits.length)) {
+        return { valid: false, message: `El número de tarjeta debe tener ${CARD_LENGTHS[brand][0]} dígitos.` };
+    }
+    if (!isValidLuhn(digits)) {
+        return { valid: false, message: "El número de tarjeta no es correcto: revisa que no se haya cambiado algún dígito." };
     }
     if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 0 || year > 99) {
         return { valid: false, message: "La fecha de vencimiento no es válida." };
