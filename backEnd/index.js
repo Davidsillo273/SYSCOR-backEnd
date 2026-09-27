@@ -4,6 +4,7 @@ import app, { allowedOrigins } from "./app.js";
 import "./database.js";
 import { initSocket } from "./src/config/socket.js";
 import { syncReservations } from "./src/utils/tables/reservationUtils.js";
+import { releaseExpiredHolds } from "./src/utils/orders/orderHoldUtils.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
 // ahí; en local seguimos usando el 4000 de siempre.
@@ -28,6 +29,8 @@ async function main() {
     // si el cliente no llegó. También se revisa al consultar mesas o reservas,
     // por si el servidor estuvo dormido.
     setInterval(syncReservations, 60 * 1000);
+    // Pedidos "En espera" cuyo tiempo terminó: vuelven solos a la cola.
+    setInterval(() => releaseExpiredHolds().catch((error) => console.error("releaseExpiredHolds:", error)), 30 * 1000);
     // Mostramos un mensaje en la consola para confirmar que el servidor está funcionando
     console.log(`Server on port ${PORT}`);
 }

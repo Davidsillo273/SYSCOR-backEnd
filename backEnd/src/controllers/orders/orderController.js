@@ -16,6 +16,7 @@ import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
 import { cancelReservationOfOrder, syncReservations, publicTable } from "../../utils/tables/reservationUtils.js";
+import { HOLD_MS, isOnHold, canHold, publicHold, notOnHoldFilter, releaseExpiredHolds, emitOrder } from "../../utils/orders/orderHoldUtils.js";
 
 const orderController = {};
 
@@ -226,6 +227,7 @@ orderController.createOrder = async (req, res) => {
 orderController.getOrders = async (req, res) => {
   try {
     await flagDelayedOrders();
+    await releaseExpiredHolds();
 
     const filter = {};
     if (req.query.table) filter.table = req.query.table;
@@ -260,35 +262,34 @@ orderController.getOrders = async (req, res) => {
 // locales solo cuando el mesero ligó la cuenta del cliente. El cliente sale
 // del token, nunca de la query, para que nadie pueda listar pedidos ajenos.
 // Tampoco se popula el mesero ni el cliente: la app no los necesita.
-// El cliente puede cancelar su pedido en línea desde la app durante los
-// primeros 15 minutos, mientras cocina no lo tenga listo.
-export const CUSTOMER_CANCEL_WINDOW_MS = 15 * 60 * 1000;
-const CUSTOMER_CANCELLABLE_STATUSES = ['pending', 'preparing', 'atrasado'];
+// El cliente puede cancelar su pedido en línea desde la app mientras siga
+// "Recibido" (pending): en cuanto cocina lo pasa a preparación ya no se
+// puede, porque ya se está usando comida para él. No hay límite de tiempo:
+// un pedido programado (comer en el local) se puede cancelar hasta que
+// cocina lo empiece.
+const CUSTOMER_CANCELLABLE_STATUSES = ['pending'];
 
-const cancelDeadlineOf = (order) => {
-  if (order.orderType !== 'online' || !CUSTOMER_CANCELLABLE_STATUSES.includes(order.status)) return null;
-  return new Date(new Date(order.createdAt).getTime() + CUSTOMER_CANCEL_WINDOW_MS);
-};
+const canCustomerCancel = (order) =>
+  order.orderType === 'online' && CUSTOMER_CANCELLABLE_STATUSES.includes(order.status);
 
 orderController.getMyOrders = async (req, res) => {
   try {
     await flagDelayedOrders();
     await syncReservations();
+    await releaseExpiredHolds();
 
     const filter = { customer: req.user.id };
     if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
 
     const orders = await Order.find(filter)
-      .select('code orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
+      .select('code hold orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
       .populate('table', 'number')
       .populate({ path: 'reservation', select: 'status reservedFor expiresAt partySize alias table checkedInAt', populate: { path: 'table' } })
       .sort({ createdAt: -1 });
 
     // Hasta cuándo se puede cancelar desde la app (null = ya no se puede).
-    const now = Date.now();
     return res.status(200).json(
       orders.map((order) => {
-        const deadline = cancelDeadlineOf(order);
         const plain = order.toObject();
         // De la mesa reservada solo lo que la app necesita (sin el QR).
         if (plain.reservation) {
@@ -298,7 +299,15 @@ orderController.getMyOrders = async (req, res) => {
             table: order.reservation.table ? publicTable(order.reservation.table) : null,
           };
         }
-        return { ...plain, cancelDeadline: deadline && deadline.getTime() > now ? deadline : null };
+        // cancelDeadline queda en null para las versiones anteriores de la app
+        // (que mostraban una cuenta regresiva de 15 minutos).
+        return {
+          ...plain,
+          canCancel: canCustomerCancel(order),
+          cancelDeadline: null,
+          hold: publicHold(order),
+          canHold: canHold(order),
+        };
       }),
     );
   } catch (error) {
@@ -317,8 +326,18 @@ orderController.updateOrderStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid status" });
     }
 
-    const previousOrder = await Order.findById(req.params.id).select("status");
+    const previousOrder = await Order.findById(req.params.id).select("status hold");
     if (!previousOrder) return res.status(404).json({ message: "Order not found" });
+
+    // "En espera": el cliente pausó el pedido; cocina no lo empieza hasta que
+    // lo reanude o pasen los 10 minutos.
+    const startsKitchen = status === 'preparing' && previousOrder.status === 'pending';
+    if (startsKitchen && isOnHold(previousOrder)) {
+      return res.status(409).json({
+        title: "Pedido en espera",
+        message: "El cliente puso este pedido en espera. Vuelve a la cola solo en unos minutos; mientras, sigue con el siguiente.",
+      });
+    }
 
     const mongoUpdate = { $set: { status } };
     // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
@@ -328,13 +347,19 @@ orderController.updateOrderStatus = async (req, res) => {
       mongoUpdate.$push = { statusHistory: { status, changedAt: new Date() } };
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
+    // Al empezar cocina se revisa otra vez que no esté en espera, en la misma
+    // operación: si el cliente pausa en ese instante, no se cocina.
+    const filter = startsKitchen ? { _id: req.params.id, ...notOnHoldFilter() } : { _id: req.params.id };
+    const order = await Order.findOneAndUpdate(
+      filter,
       mongoUpdate,
       { new: true }
     ).populate('table', 'number status')
      .populate('waiter', 'name lastname')
      .populate('customer', 'personalInfo');
+    if (!order) {
+      return res.status(409).json({ title: "Pedido en espera", message: "El cliente acaba de poner este pedido en espera." });
+    }
 
     // Facturar solo la primera vez que llega a "delivered" (evita duplicar
     // la venta si el estado se mueve delivered -> otro -> delivered)
@@ -437,17 +462,13 @@ orderController.cancelMyOrder = async (req, res) => {
     if (current.orderType !== 'online') {
       return res.status(400).json({ title: "No se puede cancelar", message: "Los pedidos hechos en el local se cancelan con tu mesero." });
     }
-    if (!CUSTOMER_CANCELLABLE_STATUSES.includes(current.status)) {
+    if (!canCustomerCancel(current)) {
       return res.status(400).json({
         title: "Ya no se puede cancelar",
-        message: current.status === 'ready' ? "Tu pedido ya está listo." : "Tu pedido ya fue entregado.",
-      });
-    }
-    const deadline = cancelDeadlineOf(current);
-    if (!deadline || Date.now() > deadline.getTime()) {
-      return res.status(400).json({
-        title: "Ya no se puede cancelar",
-        message: "Pasaron más de 15 minutos desde que hiciste el pedido. Si hay un problema, cuéntaselo a Chef Panchita.",
+        message:
+          current.status === 'delivered'
+            ? "Tu pedido ya fue entregado."
+            : "Tu pedido ya está en cocina. Si hay un problema, cuéntaselo a Chef Panchita.",
       });
     }
 
@@ -464,13 +485,14 @@ orderController.cancelMyOrder = async (req, res) => {
         $set: {
           status: 'cancelled',
           cancellation: { by: 'customer', reason, at: new Date(), refundedToWallet: toWallet, refundToCard: toCard },
+          'hold.active': false,
         },
         $push: { statusHistory: { status: 'cancelled', changedAt: new Date() } },
       },
       { new: true },
     ).populate('customer', 'personalInfo');
     if (!order) {
-      return res.status(409).json({ title: "Ya no se puede cancelar", message: "El estado de tu pedido acaba de cambiar. Revísalo de nuevo." });
+      return res.status(409).json({ title: "Ya no se puede cancelar", message: "Cocina acaba de empezar tu pedido: ya no se puede cancelar." });
     }
 
     // Si iba a comer en el local, la mesa queda libre para alguien más.
@@ -535,6 +557,64 @@ orderController.cancelMyOrder = async (req, res) => {
   } catch (error) {
     console.error("orderController.cancelMyOrder:", error);
     return res.status(500).json({ title: "Error del servidor", message: "No se pudo cancelar el pedido." });
+  }
+};
+
+// POST /orders/:id/hold — el cliente pone su pedido "En espera" (10 min).
+orderController.holdMyOrder = async (req, res) => {
+  try {
+    const current = await Order.findOne({ _id: req.params.id, customer: req.user.id });
+    if (!current) return res.status(404).json({ title: "Pedido no encontrado", message: "No encontramos ese pedido." });
+    if (!canHold(current)) {
+      return res.status(400).json({
+        title: "No se puede poner en espera",
+        message: current.hold?.used
+          ? "Este pedido ya estuvo en espera una vez."
+          : "Solo se puede mientras el pedido no haya entrado a cocina.",
+      });
+    }
+
+    const now = new Date();
+    const until = new Date(now.getTime() + HOLD_MS);
+    // Solo si sigue "Recibido" y sin pausa usada: si cocina lo empezó en este
+    // instante, gana cocina.
+    const updated = await Order.findOneAndUpdate(
+      { _id: current._id, customer: req.user.id, orderType: 'online', status: 'pending', 'hold.used': { $ne: true } },
+      { $set: { 'hold.active': true, 'hold.startedAt': now, 'hold.until': until, 'hold.used': true } },
+      { new: true },
+    );
+    if (!updated) {
+      return res.status(409).json({ title: "No se pudo", message: "Cocina acaba de empezar tu pedido." });
+    }
+
+    await emitOrder(updated._id);
+    return res.status(200).json({
+      title: "Pedido en espera",
+      message: "Tu pedido está en espera por 10 minutos. Si no lo reanudas antes, vuelve solo a la cola en su mismo lugar.",
+      hold: publicHold(updated),
+    });
+  } catch (error) {
+    console.error("orderController.holdMyOrder:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "No se pudo poner en espera el pedido." });
+  }
+};
+
+// POST /orders/:id/resume — el cliente reanuda su pedido antes de tiempo.
+orderController.resumeMyOrder = async (req, res) => {
+  try {
+    const updated = await Order.findOneAndUpdate(
+      { _id: req.params.id, customer: req.user.id, 'hold.active': true },
+      { $set: { 'hold.active': false, 'hold.releasedAt': new Date(), 'hold.releasedBy': 'customer' } },
+      { new: true },
+    );
+    if (!updated) {
+      return res.status(400).json({ title: "No estaba en espera", message: "Tu pedido ya está en la cola." });
+    }
+    await emitOrder(updated._id);
+    return res.status(200).json({ title: "Pedido reanudado", message: "Listo, tu pedido volvió a la cola en su mismo lugar.", hold: publicHold(updated) });
+  } catch (error) {
+    console.error("orderController.resumeMyOrder:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "No se pudo reanudar el pedido." });
   }
 };
 

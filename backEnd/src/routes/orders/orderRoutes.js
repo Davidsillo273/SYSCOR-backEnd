@@ -125,7 +125,7 @@ router.get("/mine", validateAuthCookie(["customer"]), orderController.getMyOrder
  * /orders/{id}/customer-cancel:
  *   post:
  *     summary: El cliente cancela su pedido en línea
- *     description: Cliente. Solo durante los primeros 15 minutos y mientras el pedido no esté listo. Lo pagado con saldo regresa al saldo; lo pagado con tarjeta queda como reembolso pendiente que un admin hace desde Wompi.
+ *     description: Cliente. Solo mientras el pedido siga recibido (pending); en cuanto pasa a cocina ya no se puede. Lo pagado con saldo regresa al saldo; lo pagado con tarjeta queda como reembolso pendiente que un admin hace desde Wompi.
  *     tags: [Pedidos]
  *     security: [{ cookieAuth: [] }]
  *     parameters:
@@ -149,6 +149,45 @@ router.get("/mine", validateAuthCookie(["customer"]), orderController.getMyOrder
  *         description: El estado cambió mientras se cancelaba.
  */
 router.post("/:id/customer-cancel", validateAuthCookie(["customer"]), orderController.cancelMyOrder);
+
+/**
+ * @swagger
+ * /orders/{id}/hold:
+ *   post:
+ *     summary: El cliente pone su pedido en espera
+ *     description: Cliente. Solo mientras el pedido siga recibido (pending) y una vez por pedido. Dura 10 minutos; al terminar vuelve solo a la cola en su mismo lugar. Mientras tanto, cocina no lo puede empezar.
+ *     tags: [Pedidos]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: "En espera. { title, message, hold: { active, until, used } }"
+ *       400:
+ *         description: Ya entró a cocina o ya se usó la espera.
+ *       409:
+ *         description: Cocina lo empezó en ese instante.
+ * /orders/{id}/resume:
+ *   post:
+ *     summary: El cliente reanuda su pedido en espera
+ *     tags: [Pedidos]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Reanudado.
+ *       400:
+ *         description: No estaba en espera.
+ */
+router.post("/:id/hold", validateAuthCookie(["customer"]), orderController.holdMyOrder);
+router.post("/:id/resume", validateAuthCookie(["customer"]), orderController.resumeMyOrder);
 
 /**
  * @swagger

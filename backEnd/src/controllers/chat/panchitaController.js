@@ -28,6 +28,7 @@ import {
 import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
 import { findOrderCode } from "../../utils/orders/orderCodeUtils.js";
 import Reservation from "../../models/tables/reservationModel.js";
+import { SUPPORT, SUPPORT_LINKS } from "../../constants/support.js";
 
 const panchitaController = {};
 
@@ -49,6 +50,8 @@ Puedes ayudarle con:
 - Mandarle un mensaje al repartidor (usa enviar_mensaje_repartidor).
 - Repetir "lo de siempre" (usa lo_de_siempre).
 - Consultar su saldo a favor y sus reclamos (usa consultar_saldo).
+- Darle los contactos del equipo (WhatsApp, llamada y correo) si quiere
+  hablar con una persona o un asesor (usa contactar_asesor).
 
 Reglas:
 1. Nunca inventes estados, horas, montos ni productos: consúltalos con las
@@ -81,6 +84,33 @@ const PEDIDO_PARAM = {
 };
 
 const TOOLS = {
+    contactar_asesor: {
+        declaration: {
+            name: "contactar_asesor",
+            description:
+                "Da los canales para hablar con una persona del equipo (WhatsApp, llamada y correo). Úsala cuando el cliente pida un asesor, hablar con alguien, un número o un correo de contacto.",
+            parameters: { type: "object", properties: {} },
+        },
+        run: async (_args, ctx) => {
+            // La app muestra botones para abrir WhatsApp, llamar o escribir.
+            ctx.cards.push({
+                type: "contact",
+                phone: SUPPORT.phone,
+                email: SUPPORT.email,
+                hours: SUPPORT.hours,
+                links: SUPPORT_LINKS,
+            });
+            return {
+                success: true,
+                whatsapp: SUPPORT.phone,
+                llamar: SUPPORT.phone,
+                correo: SUPPORT.email,
+                horario: SUPPORT.hours,
+                nota: "La app ya le muestra botones para escribir por WhatsApp, llamar o mandar un correo.",
+            };
+        },
+    },
+
     ver_mis_pedidos: {
         declaration: {
             name: "ver_mis_pedidos",

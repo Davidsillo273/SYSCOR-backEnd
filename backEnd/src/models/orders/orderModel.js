@@ -148,8 +148,19 @@ const orderSchema = new Schema({
     enum: ['pending', 'preparing', 'ready', 'delivered', 'cancelled', 'atrasado'],
     default: 'pending'
   },
-  // Cancelación hecha por el cliente desde la app (hasta 15 min después de
-  // pedir, ver orderController.cancelMyOrder). Las del panel no la llenan.
+  // "En espera": el cliente pausó el pedido mientras seguía "Recibido" (ver
+  // utils/orders/orderHoldUtils.js). Una sola vez por pedido y por 10 min.
+  hold: {
+    active: { type: Boolean, default: false },
+    startedAt: { type: Date },
+    until: { type: Date },
+    used: { type: Boolean, default: false },
+    releasedAt: { type: Date },
+    releasedBy: { type: String, enum: ['customer', 'timeout', 'cancelled'] },
+  },
+
+  // Cancelación hecha por el cliente desde la app (solo mientras el pedido
+  // sigue "Recibido", ver orderController.cancelMyOrder). Las del panel no la llenan.
   cancellation: {
     by: { type: String, enum: ['customer'] },
     reason: { type: String, maxlength: 200 },
