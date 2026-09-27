@@ -62,8 +62,8 @@ app.use(express.json());
 // Gracias a esto las notificaciones pueden decir quién realizó cada movimiento.
 app.use(attachUser);
 
-// Limitador de peticiones global (300 cada 15 min por IP): protege la API
-// completa contra abuso sin afectar el uso normal del panel. Las rutas de
+// Limitador de peticiones global (por usuario con sesión, por IP sin ella):
+// protege la API completa contra abuso sin afectar el uso normal del panel. Las rutas de
 // login/recuperación tienen además su propio límite, más estricto, definido
 // en cada archivo de rutas de auth (ver rateLimitMiddleware.authRateLimiter).
 app.use(globalRateLimiter);

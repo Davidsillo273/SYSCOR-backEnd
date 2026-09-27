@@ -39,6 +39,7 @@ import inviteEmployeeRoutes from "../auth/employees/inviteEmployeeRoutes.js";
 import loginEmployeeRoutes from "../auth/employees/loginEmployeeRoutes.js";
 //auth - admins
 import inviteAdminRoutes from "../auth/admins/inviteAdminRoutes.js";
+import invitationEmailRoutes from "../auth/invitationEmailRoutes.js";
 import loginAdminRoutes from "../auth/admins/loginAdminRoutes.js";
 
 //auth - logout
@@ -109,6 +110,8 @@ router.use("/auth/employees/login", loginEmployeeRoutes);
 //auth - admins
 router.use("/auth/admins/invite", inviteAdminRoutes);
 router.use("/auth/admins/login", loginAdminRoutes);
+//auth - invitaciones (comprobar correo mientras se escribe)
+router.use("/auth/invitations", invitationEmailRoutes);
 
 //auth - logout
 router.use("/auth/logout", logoutRoutes);

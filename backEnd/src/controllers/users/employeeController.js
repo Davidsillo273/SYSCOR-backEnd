@@ -10,6 +10,10 @@ import emailUtils from "../../utils/auth/emailUtils.js";
 import { config } from "../../../config.js";
 import { isValidPermission } from "../../constants/permissions.js";
 import { ensureAccessCodeIfNeeded } from "../../utils/users/accessCodeUtils.js";
+import {
+  validateEmployeePhone, normalizeEmployeePhone, validateIsss, validateAfpInstitution,
+  validateBankAccount, validateLegalSchedule,
+} from "../../utils/users/employeeFieldValidations.js";
 
 const employeeController = {};
 
@@ -32,6 +36,7 @@ employeeController.updateEmployee = async (req, res) => {
             workDays, scheduleStart, scheduleEnd,
             weekendScheduleEnabled, weekendScheduleStart, weekendScheduleEnd,
             status, permissions,
+            isssNumber, afpInstitution, bankName, bankAccount,
         } = req.body;
         const updateData = {};
         const validationsToRun = [];
@@ -59,8 +64,8 @@ employeeController.updateEmployee = async (req, res) => {
             updateData["personalInfo.lastname"] = lastname.trim();
         }
         if (phone !== undefined) {
-            validationsToRun.push(() => validationUtils.validatePhone(phone));
-            updateData["personalInfo.phone"] = phone.trim();
+            validationsToRun.push(() => validateEmployeePhone(phone));
+            updateData["personalInfo.phone"] = normalizeEmployeePhone(phone);
         }
         if (address !== undefined) {
             validationsToRun.push(() => validationUtils.validateAddress(address));
@@ -111,6 +116,52 @@ employeeController.updateEmployee = async (req, res) => {
             }
             updateData.permissions = permissions;
             permissionsChanged = true;
+        }
+
+        // Previsión y banco (la ficha del empleado los edita; antes se
+        // mandaban pero no se guardaban)
+        if (isssNumber !== undefined) {
+            validationsToRun.push(() => validateIsss(isssNumber));
+            updateData["workInfo.isssNumber"] = String(isssNumber ?? "").trim() || null;
+        }
+        if (afpInstitution !== undefined) {
+            validationsToRun.push(() => validateAfpInstitution(afpInstitution));
+            updateData["workInfo.afpInstitution"] = afpInstitution || null;
+        }
+
+        // El horario y el banco se validan contra lo que ya tiene guardado el
+        // empleado, porque el cambio puede traer solo una parte (ej. solo la
+        // hora de salida, o solo la cuenta).
+        const touchesSchedule = [workDays, scheduleStart, scheduleEnd, weekendScheduleEnabled, weekendScheduleStart, weekendScheduleEnd]
+            .some((v) => v !== undefined);
+        const touchesBank = bankName !== undefined || bankAccount !== undefined;
+        if (touchesSchedule || touchesBank) {
+            const current = await EmployeeModel.findById(req.params.id).select("workInfo").lean();
+            if (!current) return res.status(404).json({ title: "Empleado no encontrado", message: "No se encontró el empleado solicitado." });
+            const work = current.workInfo || {};
+
+            if (touchesSchedule) {
+                const pick = (incoming, saved) => (incoming !== undefined ? incoming : saved);
+                validationsToRun.push(() => validateLegalSchedule({
+                    workDays: pick(workDays, work.workDays),
+                    scheduleStart: pick(scheduleStart, work.scheduleStart) || null,
+                    scheduleEnd: pick(scheduleEnd, work.scheduleEnd) || null,
+                    weekendScheduleEnabled: pick(weekendScheduleEnabled, work.weekendScheduleEnabled) === true
+                        || pick(weekendScheduleEnabled, work.weekendScheduleEnabled) === "true",
+                    weekendScheduleStart: pick(weekendScheduleStart, work.weekendScheduleStart) || null,
+                    weekendScheduleEnd: pick(weekendScheduleEnd, work.weekendScheduleEnd) || null,
+                }));
+            }
+
+            if (touchesBank) {
+                const nextBank = bankName !== undefined ? String(bankName ?? "").trim() : work.bankName;
+                const nextAccount = bankAccount !== undefined ? String(bankAccount ?? "").trim() : work.bankAccount;
+                // Un banco escrito a mano antes de que existiera la lista se
+                // puede conservar tal cual.
+                validationsToRun.push(() => validateBankAccount(nextBank, nextAccount, work.bankName));
+                updateData["workInfo.bankName"] = nextBank || null;
+                updateData["workInfo.bankAccount"] = nextAccount || null;
+            }
         }
 
         // Alta/baja del empleado
