@@ -6,8 +6,26 @@ import utils from "../../../utils/auth/validationsUsersUtils.js";
 import customerUtils from "../../../utils/auth/customers/validationsCustomersUtils.js";
 import notificationUtils from "../../../utils/notifications/notificationUtils.js";
 import { normalizePhones } from "../../../utils/users/customerContactUtils.js";
+import crypto from "crypto";
+import { config } from "../../../../config.js";
 
 const registerCustomerController = {};
+
+// Huella del código de verificación. El token de verificación ya no guarda el
+// código en claro (un JWT se puede leer), así que se puede devolver en la
+// respuesta sin que alguien se salte el correo.
+const hashCode = (email, code) =>
+  crypto.createHmac("sha256", config.jwt.secret).update(`${email}:${String(code).trim().toUpperCase()}`).digest("hex");
+
+// El token de cada paso llega en el body (app actual) o en la cookie
+// (versiones anteriores). Se prefiere el del body: en Android podía quedar
+// una cookie vieja con el mismo nombre y el servidor leía esa en vez de la
+// nueva, y el registro fallaba con "error del servidor".
+const tokenFrom = (req, bodyKey, cookieName) => req.body?.[bodyKey] || req.cookies?.[cookieName];
+
+// Token que no se pudo leer (dañado, de otra sesión o firmado con otra
+// clave): no es un error del servidor, es empezar de nuevo.
+const isBadToken = (error) => error?.name === "JsonWebTokenError";
 
 /**
  * PASO 1 — Enviar código de verificación
@@ -33,7 +51,8 @@ registerCustomerController.sendCode = async (req, res) => {
 
     // Genera un código de un solo uso y lo mete en un token firmado (aún no se guarda en la DB)
     const verificationCode = emailUtils.generateVerificationCode();
-    const token = emailUtils.generateToken({ email: email.toLowerCase().trim(), verificationCode }, "15m");
+    const normalizedEmail = email.toLowerCase().trim();
+    const token = emailUtils.generateToken({ email: normalizedEmail, codeHash: hashCode(normalizedEmail, verificationCode) }, "15m");
 
     // Guarda el token en una cookie httpOnly para que el cliente no pueda leerla ni modificarla
     res.cookie("customerVerificationToken", token, {
@@ -48,7 +67,7 @@ registerCustomerController.sendCode = async (req, res) => {
       emailUtils.htmlVerificationEmail(verificationCode)
     );
 
-    return res.status(200).json({ title: "Código enviado", message: "Se envió un código de verificación a tu correo electrónico." });
+    return res.status(200).json({ title: "Código enviado", message: "Se envió un código de verificación a tu correo electrónico.", verificationToken: token });
   } catch (error) {
     console.error("registerCustomerController.sendCode:", error);
     return res.status(500).json({ title: "Error del servidor", message: "Ocurrió un problema interno al enviar el código." });
@@ -71,7 +90,7 @@ registerCustomerController.verifyCode = async (req, res) => {
   }
 
   try {
-    const token = req.cookies.customerVerificationToken;
+    const token = tokenFrom(req, "verificationToken", "customerVerificationToken");
     if (!token) {
       // Si no hay cookie significa que el paso 1 nunca se completó o ya expiró
       return res.status(401).json({ title: "Sesión expirada", message: "La verificación expiró. Vuelve a intentarlo desde el inicio." });
@@ -80,7 +99,11 @@ registerCustomerController.verifyCode = async (req, res) => {
     // Lanza error si está expirado/inválido — se captura abajo
     const decoded = emailUtils.verifyToken(token);
 
-    if (code.toUpperCase() !== decoded.verificationCode) {
+    // Tokens nuevos traen la huella; los emitidos antes, el código en claro.
+    const matches = decoded.codeHash
+      ? decoded.codeHash === hashCode(decoded.email, code)
+      : String(code).trim().toUpperCase() === decoded.verificationCode;
+    if (!matches) {
       return res.status(400).json({ title: "Código incorrecto", message: "El código de verificación es incorrecto." });
     }
 
@@ -97,10 +120,14 @@ registerCustomerController.verifyCode = async (req, res) => {
       maxAge: 30 * 60 * 1000,
     });
 
-    return res.status(200).json({ title: "Correo verificado", message: "Tu correo fue verificado. Continúa con tus datos personales." });
+    return res.status(200).json({ title: "Correo verificado", message: "Tu correo fue verificado. Continúa con tus datos personales.", registrationToken: verifiedToken });
   } catch (error) {
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({ title: "Código expirado", message: "El código ya venció. Solicita uno nuevo." });
+    }
+    if (isBadToken(error)) {
+      res.clearCookie("customerVerificationToken");
+      return res.status(401).json({ title: "Código no válido", message: "No pudimos validar tu código. Pide uno nuevo con \"Reenviar código\"." });
     }
     console.error("registerCustomerController.verifyCode:", error);
     return res.status(500).json({ title: "Error del servidor", message: "Ocurrió un problema interno al verificar el código." });
@@ -132,7 +159,7 @@ registerCustomerController.personalInfo = async (req, res) => {
   }
 
   try {
-    const token = req.cookies.customerRegistrationToken;
+    const token = tokenFrom(req, "registrationToken", "customerRegistrationToken");
     if (!token) {
       return res.status(401).json({ title: "Sesión expirada", message: "La sesión de registro expiró. Verifica tu correo nuevamente." });
     }
@@ -179,9 +206,9 @@ registerCustomerController.personalInfo = async (req, res) => {
       maxAge: 30 * 60 * 1000,
     });
 
-    return res.status(200).json({ title: "Datos guardados", message: "Tus datos se guardaron. Ahora crea tu contraseña." });
+    return res.status(200).json({ title: "Datos guardados", message: "Tus datos se guardaron. Ahora crea tu contraseña.", registrationToken: infoToken });
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
+    if (error.name === "TokenExpiredError" || isBadToken(error)) {
       return res.status(401).json({ title: "Sesión expirada", message: "La sesión expiró. Verifica tu correo nuevamente." });
     }
     console.error("registerCustomerController.personalInfo:", error);
@@ -204,7 +231,7 @@ registerCustomerController.setPassword = async (req, res) => {
   }
 
   try {
-    const token = req.cookies.customerRegistrationToken;
+    const token = tokenFrom(req, "registrationToken", "customerRegistrationToken");
     if (!token) {
       return res.status(401).json({ title: "Sesión expirada", message: "La sesión de registro expiró." });
     }
@@ -271,7 +298,7 @@ registerCustomerController.setPassword = async (req, res) => {
 
     return res.status(201).json({ title: "Cuenta creada", message: "Tu cuenta se creó correctamente. ¡Bienvenido a Taquería El Corral!" });
   } catch (error) {
-    if (error.name === "TokenExpiredError") {
+    if (error.name === "TokenExpiredError" || isBadToken(error)) {
       return res.status(401).json({ title: "Sesión expirada", message: "La sesión expiró. Empieza el registro de nuevo." });
     }
     console.error("registerCustomerController.setPassword:", error);
