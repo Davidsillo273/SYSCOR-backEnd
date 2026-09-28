@@ -26,6 +26,7 @@ import loginHelpRoutes from "../chat/loginHelpRoutes.js";
 import orderRoutes from "../orders/orderRoutes.js";
 import invoiceRoutes from "../orders/invoiceRoutes.js";
 import purchaseInvoiceRoutes from "../orders/purchaseInvoiceRoutes.js";
+import deliveryRoutes from "../orders/deliveryRoutes.js";
 
 
 
@@ -71,6 +72,7 @@ router.use("/menu/promotions", promotionsRouters);
 // La facturación (colección "invoices", generada automáticamente cuando un
 // pedido se entrega) vive aparte, en /invoices.
 router.use("/orders/carts", cartRoutes);
+router.use("/orders/delivery", deliveryRoutes);
 router.use("/orders", orderRoutes);
 router.use("/orders/wompi", wompiRoutes);
 // Pago en línea de la app de clientes (Wompi 3DS). Crea el pedido al aprobarse.
