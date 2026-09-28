@@ -38,6 +38,10 @@ const checkoutSchema = new Schema(
         creditReleased: { type: Boolean, default: false },
         chargeAmount: { type: Number, required: true }, // lo que se cobra a la tarjeta: amount - creditApplied
         isDelivery: { type: Boolean, default: false },
+        // 'online' = tarjeta con Wompi ahora. 'cash' / 'card_on_delivery' =
+        // se paga al recibir: no pasa por Wompi y el pedido se crea al momento
+        // con el pago pendiente (lo marca como pagado quien entrega).
+        paymentMethod: { type: String, enum: ["online", "cash", "card_on_delivery"], default: "online" },
         deliveryAddress: { type: String },
         // 'delivery', 'pickup' o 'dine_in'. Con 'dine_in' se crea además una
         // reserva de mesa con estos datos cuando se aprueba el pago.

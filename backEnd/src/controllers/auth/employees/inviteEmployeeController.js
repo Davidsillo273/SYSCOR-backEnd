@@ -15,6 +15,25 @@ import {
 
 const inviteEmployeeController = {};
 
+// Busca un empleado que ya tenga ese DUI. Se guarda como ########-#, pero
+// también se compara sin guion por si hay fichas viejas guardadas así.
+const findEmployeeByDui = (duiNit) => {
+  const normalized = normalizeDui(duiNit);
+  const digits = normalized.replace(/\D/g, "");
+  return EmployeeModel.findOne({ "personalInfo.duiNit": { $in: [normalized, digits] } })
+    .select("personalInfo.name personalInfo.lastname");
+};
+
+const duplicateDuiResponse = (res, employee) => {
+  const fullName = `${employee.personalInfo?.name || ""} ${employee.personalInfo?.lastname || ""}`.trim();
+  return res.status(409).json({
+    title: "DUI ya registrado",
+    message: fullName
+      ? `Ya existe un empleado registrado con este DUI (${fullName}).`
+      : "Ya existe un empleado registrado con este DUI.",
+  });
+};
+
 /**
  * Un Admin invita a alguien a unirse como Empleado. A diferencia de la
  * invitación de Admin, acá ya se definen los datos laborales (tipo de
@@ -107,6 +126,10 @@ inviteEmployeeController.sendInvitation = async (req, res) => {
     if (exists) {
       return res.status(409).json({ title: "Empleado ya existe", message: "Ya existe un empleado registrado con este correo electrónico." });
     }
+
+    // Una persona no puede tener dos fichas de empleado.
+    const sameDui = await findEmployeeByDui(duiNit);
+    if (sameDui) return duplicateDuiResponse(res, sameDui);
 
     // Guardamos todos los datos dentro de un token firmado: así el empleado
     // no puede alterar su salario ni su puesto cuando complete el registro
@@ -259,6 +282,11 @@ inviteEmployeeController.acceptInvitation = async (req, res) => {
     if (exists) {
       return res.status(409).json({ title: "Empleado ya existe", message: "Ya existe un empleado registrado con este correo electrónico." });
     }
+
+    // Se vuelve a revisar aquí: pudieron mandarse dos invitaciones con el
+    // mismo DUI a correos distintos, y la otra ya se aceptó.
+    const sameDui = await findEmployeeByDui(decoded.personalInfo.duiNit);
+    if (sameDui) return duplicateDuiResponse(res, sameDui);
 
     const bcryptjs = (await import("bcryptjs")).default;
     const passwordHash = await bcryptjs.hash(password, 10);

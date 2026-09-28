@@ -55,6 +55,9 @@ const customerSchema = new Schema(
     wallet: {
       balance: { type: Number, default: 0, min: 0 },
     },
+    // Teléfonos donde la app de clientes recibe notificaciones push
+    // (ExpoPushToken, ver utils/notifications/pushUtils.js).
+    pushTokens: { type: [String], default: [] },
     // Productos favoritos del menú
     favorites: {
       type: [{ type: Schema.Types.ObjectId, ref: "Products" }],

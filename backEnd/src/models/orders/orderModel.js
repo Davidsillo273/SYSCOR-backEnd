@@ -187,6 +187,16 @@ const orderSchema = new Schema({
     refundToCard: { type: Number, default: 0 },
   },
 
+  // Calificación que deja el cliente desde la app cuando el pedido ya se
+  // entregó. Una sola vez por pedido.
+  rating: {
+    stars: { type: Number, min: 1, max: 5 },
+    // Qué salió bien o mal, de una lista fija (ver RATING_TAGS en orderController).
+    tags: [{ type: String }],
+    comment: { type: String, maxlength: 500 },
+    at: { type: Date },
+  },
+
   // Historial de cambios de estado: de aquí se calcula el tiempo promedio de
   // preparación (preparing -> ready), el tráfico de pedidos por hora, y
   // permite detectar cuándo empezó a estar "atrasado".

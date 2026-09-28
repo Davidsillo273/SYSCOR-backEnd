@@ -152,6 +152,42 @@ router.post("/:id/customer-cancel", validateAuthCookie(["customer"]), orderContr
 
 /**
  * @swagger
+ * /orders/{id}/rating:
+ *   post:
+ *     summary: El cliente califica su pedido
+ *     description: Cliente. Solo pedidos suyos ya entregados y una sola vez. Las calificaciones de 1 o 2 estrellas avisan al equipo en la campana del panel.
+ *     tags: [Pedidos]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [stars]
+ *             properties:
+ *               stars: { type: integer, minimum: 1, maximum: 5, example: 5 }
+ *               tags: { type: array, items: { type: string }, example: ["Buen sabor", "Rápido"] }
+ *               comment: { type: string, maxLength: 500 }
+ *     responses:
+ *       200:
+ *         description: Calificación guardada.
+ *       400:
+ *         description: Estrellas inválidas o el pedido aún no se entrega.
+ *       404:
+ *         description: El pedido no existe o no es del cliente.
+ *       409:
+ *         description: El pedido ya estaba calificado.
+ */
+router.post("/:id/rating", validateAuthCookie(["customer"]), orderController.rateMyOrder);
+
+/**
+ * @swagger
  * /orders/{id}/hold:
  *   post:
  *     summary: El cliente empieza a agregar productos a su pedido

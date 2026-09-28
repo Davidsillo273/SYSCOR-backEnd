@@ -16,6 +16,7 @@ import CombosModel from "../../models/menu/combosModel.js";
 import InventoryModel from "../../models/inventory/inventoryModel.js";
 import TablesModel from "../../models/tables/tablesModel.js";
 import Order from "../../models/orders/orderModel.js";
+import { notifyOrderStatus } from "../../utils/notifications/pushUtils.js";
 import Invoice from "../../models/orders/invoiceModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
 import { findByNameInsensitive } from "../../utils/common/duplicateNameUtils.js";
@@ -428,9 +429,11 @@ const updateOrderStatus = {
     const shortId = normalizeOrderCode(args.orderShortId);
     if (!shortId) return { success: false, message: "Necesito el código de orden, por ejemplo AD27-01." };
     // El día del código se repite cada mes: gana el pedido activo más reciente.
-    const match = await Order.findOne({ code: shortId, status: { $ne: "delivered" } }).sort({ createdAt: -1 }).select("_id status").lean();
+    const match = await Order.findOne({ code: shortId, status: { $ne: "delivered" } }).sort({ createdAt: -1 }).select("_id status code customer orderType fulfillment isDelivery").lean();
     if (!match) return { success: false, message: `No encontré ningún pedido activo con el código ${shortId}.` };
     await Order.findByIdAndUpdate(match._id, { $set: { status: args.status }, $push: { statusHistory: { status: args.status, changedAt: new Date() } } });
+    // Push al cliente de la app, igual que cuando cocina cambia el estado.
+    if (match.status !== args.status) notifyOrderStatus(match, args.status);
     return { success: true, order: { shortId, status: args.status } };
   },
 };

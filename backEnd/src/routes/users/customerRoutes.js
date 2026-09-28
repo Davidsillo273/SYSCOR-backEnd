@@ -444,4 +444,59 @@ router
     .route("/:id/cards/:index/default")
     .patch(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.setDefaultCard);
 
+/**
+ * @swagger
+ * /users/customers/{id}/push-token:
+ *   post:
+ *     summary: Registra el teléfono para notificaciones push
+ *     description: Cliente (dueño de la cuenta). Guarda el ExpoPushToken de la app para avisarle cuando su pedido cambia de estado. Se guardan hasta 5 teléfonos.
+ *     tags: [Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token]
+ *             properties:
+ *               token: { type: string, example: "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]" }
+ *     responses:
+ *       200:
+ *         description: Token guardado.
+ *       400:
+ *         description: Token inválido.
+ *   delete:
+ *     summary: Quita el teléfono de las notificaciones push
+ *     description: Cliente (dueño de la cuenta). Se llama al cerrar sesión o al apagar los avisos.
+ *     tags: [Clientes]
+ *     security: [{ cookieAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token]
+ *             properties:
+ *               token: { type: string }
+ *     responses:
+ *       200:
+ *         description: Token quitado.
+ */
+router
+    .route("/:id/push-token")
+    .post(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.addPushToken)
+    .delete(validateAuthCookie(["customer"]), ownsResourceOrIsAdmin, customerController.removePushToken);
+
 export default router;

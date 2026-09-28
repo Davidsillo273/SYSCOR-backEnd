@@ -8,6 +8,7 @@ import cloudinaryUtils from "../../utils/cloudinaryUtils.js";
 import customerValidations from "../../utils/auth/customers/validationsCustomersUtils.js";
 import contactUtils from "../../utils/users/customerContactUtils.js";
 import cardCryptoUtils from "../../utils/users/cardCryptoUtils.js";
+import { isPushToken } from "../../utils/notifications/pushUtils.js";
 
 const customerController = {};
 
@@ -598,6 +599,44 @@ customerController.deleteCard = async (req, res) => {
     } catch (error) {
         console.error("customerController.deleteCard:", error);
         return res.status(500).json({ title: "Error del servidor", message: "No se pudo eliminar la tarjeta." });
+    }
+};
+
+// Máximo de teléfonos con avisos por cliente: se queda con los más recientes.
+const MAX_PUSH_TOKENS = 5;
+
+// POST /users/customers/:id/push-token — la app registra el teléfono para
+// recibir avisos de sus pedidos. Si ya estaba, solo pasa a ser el más reciente.
+customerController.addPushToken = async (req, res) => {
+    try {
+        const token = req.body?.token;
+        if (!isPushToken(token)) return res.status(400).json({ title: "Token inválido", message: "No se pudo activar las notificaciones." });
+
+        const customer = await CustomerModel.findById(req.params.id).select("pushTokens");
+        if (!customer) return res.status(404).json({ title: "Cliente no encontrado", message: "No encontramos tu cuenta." });
+
+        const tokens = (customer.pushTokens || []).filter((t) => t !== token);
+        tokens.push(token);
+        customer.pushTokens = tokens.slice(-MAX_PUSH_TOKENS);
+        await customer.save();
+        return res.status(200).json({ message: "Notificaciones activadas." });
+    } catch (error) {
+        console.error("customerController.addPushToken:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo activar las notificaciones." });
+    }
+};
+
+// DELETE /users/customers/:id/push-token — al cerrar sesión o apagar los
+// avisos en la app, ese teléfono deja de recibirlos.
+customerController.removePushToken = async (req, res) => {
+    try {
+        const token = req.body?.token;
+        if (!isPushToken(token)) return res.status(400).json({ title: "Token inválido", message: "Token de notificaciones inválido." });
+        await CustomerModel.updateOne({ _id: req.params.id }, { $pull: { pushTokens: token } });
+        return res.status(200).json({ message: "Notificaciones desactivadas." });
+    } catch (error) {
+        console.error("customerController.removePushToken:", error);
+        return res.status(500).json({ title: "Error del servidor", message: "No se pudo desactivar las notificaciones." });
     }
 };
 

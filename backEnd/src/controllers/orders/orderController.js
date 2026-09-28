@@ -13,6 +13,7 @@ import { resolvePeriodRange, buildDateMatch } from "../../utils/orders/periodUti
 // cambio de estado al instante, sin recargar ni sondear.
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
+import { notifyOrderStatus } from "../../utils/notifications/pushUtils.js";
 import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
 import { cancelReservationOfOrder, syncReservations, publicTable } from "../../utils/tables/reservationUtils.js";
@@ -282,7 +283,7 @@ orderController.getMyOrders = async (req, res) => {
     if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
 
     const orders = await Order.find(filter)
-      .select('code hold orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus items total status statusHistory cancellation createdAt updatedAt')
+      .select('code hold orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus payment.creditApplied items total status statusHistory cancellation rating createdAt updatedAt')
       .populate('table', 'number')
       .populate({ path: 'reservation', select: 'status reservedFor expiresAt partySize alias table checkedInAt', populate: { path: 'table' } })
       .sort({ createdAt: -1 });
@@ -372,6 +373,10 @@ orderController.updateOrderStatus = async (req, res) => {
     }
 
     emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+
+    // Push al cliente de la app. No se espera: cocina no tiene por qué
+    // aguardar a que salga el aviso.
+    if (previousOrder.status !== status) notifyOrderStatus(order, status);
 
     return res.status(200).json({ message: "Order updated", data: order });
   } catch (error) {
@@ -477,7 +482,10 @@ orderController.cancelMyOrder = async (req, res) => {
     }
 
     const paidOnline = current.paymentStatus === 'paid' && current.paymentMethod === 'online';
-    const toWallet = paidOnline ? Number(current.payment?.creditApplied) || 0 : 0;
+    // Pago al recibir: lo que se cubrió con saldo sí se descontó al pedir, así
+    // que regresa al saldo; el resto nunca se cobró.
+    const payOnDelivery = ['cash', 'card_on_delivery'].includes(current.paymentMethod);
+    const toWallet = paidOnline || payOnDelivery ? Number(current.payment?.creditApplied) || 0 : 0;
     const toCard = paidOnline ? Number(current.payment?.amount) || 0 : 0;
     const reason = String(req.body?.reason || '').trim().slice(0, 200);
 
@@ -906,6 +914,58 @@ orderController.checkoutTable = async (req, res) => {
   } catch (error) {
     console.error("Error en checkoutTable:", error);
     return res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+// Lo que el cliente puede marcar al calificar, además de las estrellas.
+const RATING_TAGS = [
+  'Buen sabor', 'Llegó caliente', 'Buena porción', 'Rápido', 'Buen servicio',
+  'Llegó frío', 'Tardó mucho', 'Faltó algo', 'Mal sabor', 'Porción pequeña',
+];
+
+// POST /orders/:id/rating — el cliente califica un pedido suyo ya entregado.
+// Una sola vez por pedido. Las calificaciones bajas avisan al equipo.
+orderController.rateMyOrder = async (req, res) => {
+  try {
+    const stars = Number(req.body?.stars);
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+      return res.status(400).json({ title: "Elige las estrellas", message: "Califica tu pedido de 1 a 5 estrellas." });
+    }
+    const tags = (Array.isArray(req.body?.tags) ? req.body.tags : [])
+      .filter((tag) => RATING_TAGS.includes(tag))
+      .slice(0, RATING_TAGS.length);
+    const comment = String(req.body?.comment || '').trim().slice(0, 500);
+
+    // Solo se guarda si es suyo, ya se entregó y no lo había calificado.
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, customer: req.user.id, status: 'delivered', 'rating.stars': { $exists: false } },
+      { $set: { rating: { stars, tags, comment: comment || undefined, at: new Date() } } },
+      { new: true },
+    ).select('code rating contact');
+
+    if (!order) {
+      const exists = await Order.findOne({ _id: req.params.id, customer: req.user.id }).select('status rating');
+      if (!exists) return res.status(404).json({ title: "Pedido no encontrado", message: "No encontramos ese pedido." });
+      if (exists.rating?.stars) return res.status(409).json({ title: "Ya lo calificaste", message: "Gracias, ya habías calificado este pedido." });
+      return res.status(400).json({ title: "Aún no se puede", message: "Podrás calificar tu pedido cuando se entregue." });
+    }
+
+    const who = [order.contact?.name, order.contact?.lastname].filter(Boolean).join(' ') || 'Un cliente';
+    await notificationUtils.createNotification({
+      req,
+      category: "orders",
+      action: "rated",
+      title: stars <= 2 ? "Calificación baja" : "Pedido calificado",
+      message: `${who} calificó el pedido ${order.code} con ${stars} ${stars === 1 ? 'estrella' : 'estrellas'}${comment ? `: "${comment.slice(0, 120)}"` : ''}`,
+      icon: "star",
+      severity: stars <= 2 ? "warning" : "success",
+      entity: { model: "Order", id: order._id, label: order.code },
+    });
+
+    return res.status(200).json({ title: "¡Gracias!", message: "Tu calificación nos ayuda a mejorar.", rating: order.rating });
+  } catch (error) {
+    console.error("orderController.rateMyOrder:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "No se pudo guardar tu calificación." });
   }
 };
 

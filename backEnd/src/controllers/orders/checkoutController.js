@@ -17,6 +17,7 @@ import Combos from "../../models/menu/combosModel.js";
 import Drinks from "../../models/menu/drinksModel.js";
 import Extras from "../../models/menu/extrasModel.js";
 import Saucers from "../../models/menu/saucersModel.js";
+import Promotions from "../../models/menu/promotionsModel.js";
 import { config } from "../../../config.js";
 import wompiClient, { WompiError } from "../../utils/payments/wompiClient.js";
 import cardCryptoUtils from "../../utils/users/cardCryptoUtils.js";
@@ -37,6 +38,8 @@ import {
 } from "../../utils/tables/reservationUtils.js";
 
 const FULFILLMENTS = ["delivery", "pickup", "dine_in"];
+// Formas de pagar al recibir: en efectivo o con tarjeta en el POS de quien entrega.
+const PAY_ON_DELIVERY = ["cash", "card_on_delivery"];
 
 const checkoutController = {};
 
@@ -56,6 +59,79 @@ const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const publicBaseUrl = (req) => (config.appUrl || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
 const apiPrefix = () => (process.env.API_URL || "/api").replace(/\/+$/, "");
 
+// Reparte el precio de la promoción entre sus productos, en proporción a lo
+// que cuesta cada uno suelto, sin que se pierda ni sobre un centavo: la suma
+// de las líneas es exactamente el precio de la promo. Lo que no cuadra por
+// redondeo se lo lleva una línea de una sola unidad (si no hay, se separa una
+// unidad de la línea más cara).
+const allocatePromotionPrice = (lines, promoPrice) => {
+    const toCents = (n) => Math.round((Number(n) || 0) * 100);
+    const priceCents = toCents(promoPrice);
+    const listCents = lines.reduce((sum, line) => sum + toCents(line.listPrice) * line.quantity, 0);
+
+    const priced = lines.map((line) => ({
+        ...line,
+        unitCents: listCents > 0 ? Math.round((toCents(line.listPrice) * priceCents) / listCents) : 0,
+    }));
+    const residual = priceCents - priced.reduce((sum, line) => sum + line.unitCents * line.quantity, 0);
+
+    if (residual !== 0) {
+        const single = priced.find((line) => line.quantity === 1 && line.unitCents + residual >= 0);
+        if (single) {
+            single.unitCents += residual;
+        } else {
+            const index = priced.reduce((best, line, i) => (line.unitCents > priced[best].unitCents ? i : best), 0);
+            const base = priced[index];
+            priced.splice(index, 1,
+                { ...base, quantity: base.quantity - 1 },
+                { ...base, quantity: 1, unitCents: Math.max(0, base.unitCents + residual) },
+            );
+        }
+    }
+
+    return priced
+        .filter((line) => line.quantity > 0)
+        .map(({ unitCents, listPrice, ...line }) => ({ ...line, price: unitCents / 100 }));
+};
+
+// Una promoción del carrito se convierte en las líneas de sus productos (el
+// "4 tacos + 1 burrito" llega a cocina como tal) con el precio de la promo
+// repartido entre ellas. Así cocina, inventario y facturas la tratan igual
+// que cualquier otro pedido. Solo se acepta si sigue vigente en este momento.
+const buildPromotionLines = async (cartItem, quantity) => {
+    const unavailable = { error: `${cartItem.name || "La promoción"} ya no está disponible. Quítala del carrito.` };
+
+    const promotion = await Promotions.findById(cartItem.productId).populate("items.refId", "name price status");
+    if (!promotion || !promotion.isLive) return unavailable;
+
+    const lines = [];
+    for (const item of promotion.items || []) {
+        const product = item.refId;
+        if (!product || !isActive(product)) return unavailable;
+
+        const notes = [`Promo: ${promotion.name}`];
+        const removed = (item.removedIngredients || []).filter(Boolean);
+        if (removed.length > 0) notes.push(`Sin ${removed.map((name) => name.toLowerCase()).join(", ")}`);
+        const added = (item.addedIngredients || []).map((extra) => extra?.name).filter(Boolean);
+        if (added.length > 0) notes.push(`Con: ${added.join(", ")}`);
+
+        lines.push({
+            itemType: item.itemType,
+            itemId: product._id,
+            name: product.name,
+            listPrice: Number(product.price) || 0,
+            quantity: Math.max(1, Number(item.quantity) || 1),
+            notes: notes.join(" · ").slice(0, 300),
+        });
+    }
+    if (lines.length === 0) return unavailable;
+
+    // El reparto se hace para una promo y luego se multiplica: cada copia
+    // cuesta exactamente el precio de la promoción.
+    const perPromotion = allocatePromotionPrice(lines, promotion.price);
+    return { lines: perPromotion.map((line) => ({ ...line, quantity: line.quantity * quantity })) };
+};
+
 // Convierte el carrito de la app en líneas de pedido con precios del servidor.
 // Los extras van como líneas propias (así cocina los ve y el total cuadra);
 // salsas, bebida del combo, opciones elegidas e ingredientes quitados van en
@@ -69,13 +145,20 @@ const buildItems = async (cartItems) => {
 
     const items = [];
     for (const cartItem of cartItems) {
-        const model = MODELS[cartItem?.productType];
-        if (!model) return { error: "Hay un producto que no se puede pedir en línea." };
-
-        const quantity = Number(cartItem.quantity) || 1;
+        const quantity = Number(cartItem?.quantity) || 1;
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
             return { error: "Revisa las cantidades de tu pedido." };
         }
+
+        if (cartItem?.productType === "promotion") {
+            const promo = await buildPromotionLines(cartItem, quantity);
+            if (promo.error) return { error: promo.error };
+            items.push(...promo.lines);
+            continue;
+        }
+
+        const model = MODELS[cartItem?.productType];
+        if (!model) return { error: "Hay un producto que no se puede pedir en línea." };
 
         // La categoría (o las de los platillos del combo) decide qué extras le tocan.
         let query = model.findById(cartItem.productId).select("name price status category saucers selectiveOptions drinkPolicy");
@@ -220,6 +303,7 @@ const publicCheckout = (checkout) => ({
     amount: checkout.amount,
     creditApplied: checkout.creditApplied || 0,
     chargeAmount: checkout.chargeAmount,
+    paymentMethod: checkout.paymentMethod || "online",
     orderId: checkout.order || null,
     fulfillment: checkout.fulfillment || (checkout.isDelivery ? "delivery" : "pickup"),
     addToOrder: checkout.addToOrder || null,
@@ -267,6 +351,8 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
         const customer = await CustomerModel.findById(checkout.customer).select("personalInfo loginInfo.email");
         const fulfillment = checkout.fulfillment || (checkout.isDelivery ? "delivery" : "pickup");
         const dineIn = fulfillment === "dine_in" ? checkout.dineIn : null;
+        // Pago al recibir: queda pendiente lo que no cubrió el saldo.
+        const payOnDelivery = PAY_ON_DELIVERY.includes(checkout.paymentMethod) && checkout.chargeAmount > 0;
         const order = await Order.create({
             orderType: "online",
             customer: checkout.customer,
@@ -281,13 +367,13 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
             // Comer en el local: cocina lo ve como pedido programado para la hora
             // de llegada.
             scheduledFor: dineIn ? dineIn.reservedFor : null,
-            paymentMethod: "online",
-            paymentStatus: "paid",
+            paymentMethod: payOnDelivery ? checkout.paymentMethod : "online",
+            paymentStatus: payOnDelivery ? "pending" : "paid",
             items: checkout.items,
             total: checkout.subtotal,
             payment: {
                 // Todo con saldo a favor no pasa por Wompi.
-                provider: checkout.chargeAmount > 0 ? "wompi" : "credit",
+                provider: payOnDelivery ? "on_delivery" : checkout.chargeAmount > 0 ? "wompi" : "credit",
                 transactionId: checkout.wompi?.transactionId || null,
                 authorizationCode: transaction.codigoAutorizacion || null,
                 amount: checkout.chargeAmount,
@@ -507,6 +593,17 @@ const replayCheckout = (req, res, checkout) => {
 checkoutController.createCheckout = async (req, res) => {
     try {
         const { items: cartItems, deliveryAddress, card, saveCard, useCredit, dineIn, addToOrder } = req.body || {};
+        // Las versiones anteriores de la app no lo mandan: pagan con tarjeta en línea.
+        const paymentMethod = PAY_ON_DELIVERY.includes(req.body?.paymentMethod) ? req.body.paymentMethod : "online";
+        const payOnDelivery = paymentMethod !== "online";
+        // Lo agregado a un pedido se paga en línea: el pedido original ya
+        // tiene su forma de pago y quien entrega no sabría cuánto cobrar.
+        if (payOnDelivery && addToOrder) {
+            return res.status(400).json({
+                title: "Paga en línea",
+                message: "Los productos que agregas a un pedido se pagan en línea.",
+            });
+        }
 
         // Reintento del mismo intento de pago (la app no alcanzó a recibir la
         // respuesta): no se crea ni se cobra otro.
@@ -582,7 +679,7 @@ checkoutController.createCheckout = async (req, res) => {
         // Si el saldo cubre todo, no hace falta tarjeta. Si la app creyó que sí
         // lo cubría (no mandó tarjeta) pero con los precios de hoy falta algo,
         // se le dice cuánto, en vez de pedirle un CVV sin explicación.
-        if (chargeAmount > 0 && !card) {
+        if (chargeAmount > 0 && !card && !payOnDelivery) {
             return res.status(400).json({
                 title: "Tu saldo no alcanza",
                 message: `El total de tu pedido es $${amount.toFixed(2)} y tu saldo cubre $${creditApplied.toFixed(2)}. Faltan $${chargeAmount.toFixed(2)}: elige una tarjeta para pagarlos.`,
@@ -591,7 +688,7 @@ checkoutController.createCheckout = async (req, res) => {
                 chargeAmount,
             });
         }
-        const resolved = chargeAmount > 0 ? resolveCard(customer, card) : {};
+        const resolved = chargeAmount > 0 && !payOnDelivery ? resolveCard(customer, card) : {};
         if (resolved.error) return res.status(400).json({ title: "Revisa tu tarjeta", message: resolved.error });
 
         if (creditApplied > 0) {
@@ -615,6 +712,7 @@ checkoutController.createCheckout = async (req, res) => {
             creditApplied,
             chargeAmount,
             isDelivery,
+            paymentMethod,
             fulfillment,
             dineIn: dineInData,
             addToOrder: targetOrder?._id || null,
@@ -647,8 +745,9 @@ checkoutController.createCheckout = async (req, res) => {
             });
         }
 
-        // Pagado por completo con saldo: el pedido se crea de una vez.
-        if (chargeAmount === 0) {
+        // Pagado por completo con saldo, o se paga al recibir: no hay cobro en
+        // línea, así que el pedido se crea de una vez.
+        if (chargeAmount === 0 || payOnDelivery) {
             const settled = await createOrderFromCheckout(checkout._id, {});
             return res.status(201).json({ ...publicCheckout(settled), paymentUrl: null, returnUrlPrefix: null });
         }
