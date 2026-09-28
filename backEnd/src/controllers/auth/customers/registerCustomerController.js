@@ -23,6 +23,21 @@ const hashCode = (email, code) =>
 // nueva, y el registro fallaba con "error del servidor".
 const tokenFrom = (req, bodyKey, cookieName) => req.body?.[bodyKey] || req.cookies?.[cookieName];
 
+// La app de clientes pide la dirección por partes (departamento, municipio,
+// tipo, colonia, calle, número, alias); aquí se guarda como { tag, details }
+// igual que en "Mis direcciones". Las que ya vienen armadas pasan tal cual.
+const ADDRESS_TAGS = { residencia: "Casa", oficina: "Trabajo", otro: "Otro" };
+const clean = (value) => String(value ?? "").trim();
+const toAddress = (a = {}) => {
+  if (clean(a.tag) && clean(a.details)) return { tag: clean(a.tag), details: clean(a.details), isDefault: a.isDefault };
+  const street = [clean(a.calle), clean(a.numero) ? `#${clean(a.numero)}` : ""].filter(Boolean).join(" ");
+  return {
+    tag: clean(a.alias) || ADDRESS_TAGS[a.tipo] || (street ? "Casa" : ""),
+    details: [street, clean(a.colonia), clean(a.municipio), clean(a.departamento)].filter(Boolean).join(", "),
+    isDefault: a.isDefault,
+  };
+};
+
 // Token que no se pudo leer (dañado, de otra sesión o firmado con otra
 // clave): no es un error del servidor, es empezar de nuevo.
 const isBadToken = (error) => error?.name === "JsonWebTokenError";
@@ -174,11 +189,15 @@ registerCustomerController.personalInfo = async (req, res) => {
     // como default. Si el cliente no marcó ninguna, usa la primera por defecto.
     let normalizedAddresses = [];
     if (Array.isArray(addresses) && addresses.length > 0) {
-      const hasDefault = addresses.some((a) => a.isDefault);
-      normalizedAddresses = addresses.map((a, i) => ({
+      const shaped = addresses.map(toAddress);
+      if (shaped.some((a) => !a.tag || !a.details)) {
+        return res.status(400).json({ title: "Dirección incompleta", message: "Revisa tu dirección: falta la calle, la colonia o el municipio." });
+      }
+      const hasDefault = shaped.some((a) => a.isDefault);
+      normalizedAddresses = shaped.map((a, i) => ({
         tag: a.tag,
         details: a.details,
-        isDefault: hasDefault ? a.isDefault : i === 0,
+        isDefault: hasDefault ? !!a.isDefault : i === 0,
       }));
     }
 
