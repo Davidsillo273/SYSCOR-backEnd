@@ -262,6 +262,12 @@ router.post("/:id/resume", validateAuthCookie(["customer"]), orderController.res
  */
 router.put("/:id/status", validateAuthCookie(["employee", "admin"]), orderController.updateOrderStatus);
 
+// Servicio en mesa (app del mesero):
+//   fire  = "marchar" un segundo tiempo que estaba en espera.
+//   claim = "yo la llevo" una comanda lista ({ claim: false } para soltarla).
+router.put("/:id/fire", validateAuthCookie(["employee", "admin"]), orderController.fireOrder);
+router.put("/:id/claim", validateAuthCookie(["employee"]), orderController.claimOrder);
+
 /**
  * @swagger
  * /orders/{id}/payment-status:

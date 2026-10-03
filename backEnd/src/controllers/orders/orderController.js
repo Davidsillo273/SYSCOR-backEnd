@@ -1,5 +1,6 @@
 ﻿import bcryptjs from "bcryptjs";
 import Order from "../../models/orders/orderModel.js";
+import { WAITER_POPULATE, employeeName } from "../../utils/orders/waiterPopulate.js";
 import Invoice from "../../models/orders/invoiceModel.js";
 import Combos from "../../models/menu/combosModel.js";
 import Drinks from "../../models/menu/drinksModel.js";
@@ -51,7 +52,7 @@ const flagDelayedOrders = async () => {
       // "preparing" hasta que alguien recargara la pantalla.
       const populated = await Order.findById(order._id)
         .populate('table', 'number status')
-        .populate('waiter', 'name lastname')
+        .populate(WAITER_POPULATE)
         .populate('customer', 'personalInfo');
 
       if (populated) {
@@ -86,6 +87,24 @@ const generateInvoice = async (order) => {
 // Crear pedido. Los campos que se guardan cambian segÃºn orderType:
 //   - "local": requiere mesa (debe estar "ocupada") y el mesero es quien tiene la sesiÃ³n.
 //   - "online": requiere cliente, y si isDelivery es true, la direcciÃ³n de entrega.
+// Ronda que le toca a una comanda nueva de la mesa: la siguiente a las que ya
+// tiene la cuenta abierta (desde que se ocupó), o la misma de `roundOf` si es
+// el segundo tiempo de un envío.
+const nextRoundFor = async (tableDoc, roundOf) => {
+  if (roundOf && /^[a-f\d]{24}$/i.test(String(roundOf))) {
+    const sibling = await Order.findOne({ _id: roundOf, table: tableDoc._id }).select('round').lean();
+    if (sibling?.round) return sibling.round;
+  }
+  const since = tableDoc.occupiedAt ? new Date(tableDoc.occupiedAt) : new Date(0);
+  const previous = await Order.find({
+    table: tableDoc._id,
+    orderType: 'local',
+    createdAt: { $gte: since },
+    status: { $ne: 'cancelled' },
+  }).select('round').sort({ createdAt: 1 }).lean();
+  return previous.reduce((max, o, i) => Math.max(max, o.round || i + 1), 0) + 1;
+};
+
 orderController.createOrder = async (req, res) => {
   try {
     const { orderType, items } = req.body;
@@ -133,6 +152,12 @@ orderController.createOrder = async (req, res) => {
       // Pedido del local: siempre es para comer en el restaurante.
       orderFields.fulfillment = 'dine_in';
       orderFields.isDelivery = false;
+      // Ronda y tiempo (ver orderModel). El segundo tiempo de un mismo envío
+      // llega con `roundOf` (el id del primero) para compartir la ronda.
+      const course = [1, 2].includes(Number(req.body.course)) ? Number(req.body.course) : undefined;
+      orderFields.course = course;
+      orderFields.waiting = course === 2 && req.body.waitForWaiter === true;
+      orderFields.round = await nextRoundFor(tableDoc, req.body.roundOf);
     } else {
       const {
         customer, isDelivery, deliveryAddress, paymentMethod,
@@ -237,7 +262,7 @@ orderController.createOrder = async (req, res) => {
 
     const populated = await Order.findById(newOrder._id)
       .populate('table', 'number status')
-      .populate('waiter', 'name lastname')
+      .populate(WAITER_POPULATE)
       .populate('customer', 'personalInfo');
 
     // La comanda ya poblada es justo lo que muestra la pantalla de pedidos,
@@ -277,7 +302,7 @@ orderController.getOrders = async (req, res) => {
 
     const orders = await Order.find(filter)
       .populate('table', 'number status peopleCount')
-      .populate('waiter', 'name lastname')
+      .populate(WAITER_POPULATE)
       .populate('customer', 'personalInfo loginInfo.email')
       .sort({ createdAt: -1 });
 
@@ -361,12 +386,19 @@ orderController.updateOrderStatus = async (req, res) => {
     // un pedido cuyo tiempo ya terminó se pueda cocinar de inmediato.
     if (status === 'preparing') await releaseExpiredHolds();
 
-    const previousOrder = await Order.findById(req.params.id).select("status hold");
+    const previousOrder = await Order.findById(req.params.id).select("status hold waiting");
     if (!previousOrder) return res.status(404).json({ message: "Order not found" });
 
     // El cliente está agregando productos: cocina no lo empieza hasta que
     // pague lo agregado, lo deje o pasen los 10 minutos.
     const startsKitchen = status === 'preparing' && previousOrder.status === 'pending';
+    // Segundo tiempo en espera: cocina no lo empieza hasta que el mesero lo marche.
+    if (startsKitchen && previousOrder.waiting) {
+      return res.status(409).json({
+        title: "Esperando al mesero",
+        message: "Esta comanda es un segundo tiempo: se prepara cuando el mesero la marche.",
+      });
+    }
     if (startsKitchen && previousOrder.hold?.active) {
       return res.status(409).json({
         title: "Cliente agregando productos",
@@ -375,6 +407,12 @@ orderController.updateOrderStatus = async (req, res) => {
     }
 
     const mongoUpdate = { $set: { status } };
+    // Quién la sirvió (puede ser otro mesero distinto del que la tomó).
+    if (status === 'delivered' && previousOrder.status !== 'delivered' && req.user?.role === 'employee') {
+      const employee = await EmployeeModel.findById(req.user.id).select('personalInfo.name personalInfo.lastname').lean();
+      mongoUpdate.$set.servedBy = { id: req.user.id, name: employeeName(employee), at: new Date() };
+    }
+    if (status === 'cancelled') mongoUpdate.$set.waiting = false;
     // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
     // reinicia su tiempo en preparaciÃ³n (acciÃ³n "Continuar" de cocina).
     const restartsPreparation = status === 'preparing' && ['preparing', 'atrasado'].includes(previousOrder.status);
@@ -390,7 +428,7 @@ orderController.updateOrderStatus = async (req, res) => {
       mongoUpdate,
       { new: true }
     ).populate('table', 'number status')
-     .populate('waiter', 'name lastname')
+     .populate(WAITER_POPULATE)
      .populate('customer', 'personalInfo');
     if (!order) {
       return res.status(409).json({ title: "Cliente agregando productos", message: "El cliente acaba de empezar a agregar productos a este pedido." });
@@ -429,7 +467,7 @@ orderController.updatePaymentStatus = async (req, res) => {
       { $set: { paymentStatus } },
       { new: true }
     ).populate('table', 'number status')
-     .populate('waiter', 'name lastname')
+     .populate(WAITER_POPULATE)
      .populate('customer', 'personalInfo');
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -473,7 +511,7 @@ orderController.cancelOrder = async (req, res) => {
       },
       { new: true }
     ).populate('table', 'number status')
-     .populate('waiter', 'name lastname')
+     .populate(WAITER_POPULATE)
      .populate('customer', 'personalInfo');
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -826,7 +864,7 @@ orderController.getWaiterDashboard = async (req, res) => {
       table: { $ne: null },
       $or: statusFilter,
     })
-      .populate('waiter', 'name lastname')
+      .populate(WAITER_POPULATE)
       .sort({ createdAt: 1 })
       .lean();
 
@@ -848,6 +886,16 @@ orderController.getWaiterDashboard = async (req, res) => {
         occupiedAt: table.status === 'ocupada' ? table.occupiedAt || null : null,
         activeOrders: tableOrders.map((order) => ({
           _id: order._id,
+          // Código que ven todos ("CL03-02") y quién tomó la comanda, para que
+          // cualquier mesero pueda servirla y ver de quién es.
+          code: order.code || null,
+          waiterId: order.waiter?._id || null,
+          round: order.round || null,
+          course: order.course || null,
+          waiting: !!order.waiting,
+          firedAt: order.firedAt || null,
+          servingBy: order.servingBy?.id ? order.servingBy : null,
+          servedBy: order.servedBy?.id ? order.servedBy : null,
           status: order.status,
           paymentStatus: order.paymentStatus,
           total: order.total,
@@ -901,6 +949,15 @@ orderController.checkoutTable = async (req, res) => {
     });
     const orders = candidates.filter((o) => belongsToOpenTab(o, table));
 
+    // Un segundo tiempo que sigue en espera no se ha cocinado: hay que
+    // marcharlo o cancelarlo antes de cobrar, o se cobraría sin servirse.
+    if (orders.some((o) => o.waiting && o.status === 'pending')) {
+      return res.status(409).json({
+        title: "Hay un tiempo en espera",
+        message: "Esta mesa tiene una comanda esperando a que la marches. Márchala o cancélala antes de cobrar.",
+      });
+    }
+
     if (orders.length === 0) {
       return res.status(400).json({ message: "La mesa no tiene consumos pendientes de cobro" });
     }
@@ -922,7 +979,7 @@ orderController.checkoutTable = async (req, res) => {
 
       const populated = await Order.findById(order._id)
         .populate('table', 'number status')
-        .populate('waiter', 'name lastname')
+        .populate(WAITER_POPULATE)
         .populate('customer', 'personalInfo');
 
       if (!wasDelivered) await generateInvoice(populated);
@@ -999,6 +1056,59 @@ orderController.rateMyOrder = async (req, res) => {
   } catch (error) {
     console.error("orderController.rateMyOrder:", error);
     return res.status(500).json({ title: "Error del servidor", message: "No se pudo guardar tu calificación." });
+  }
+};
+
+// "Marchar": el mesero avisa que ya se puede preparar un segundo tiempo que
+// estaba en espera. Vuelve a la cola de cocina desde este momento (se anota
+// en el historial para que su tiempo de espera no cuente como retraso).
+orderController.fireOrder = async (req, res) => {
+  try {
+    const now = new Date();
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, orderType: 'local', status: 'pending', waiting: true },
+      { $set: { waiting: false, firedAt: now }, $push: { statusHistory: { status: 'pending', changedAt: now } } },
+      { new: true },
+    );
+    if (!order) {
+      return res.status(409).json({ title: "No se pudo marchar", message: "Esta comanda ya no está en espera." });
+    }
+    const populated = await emitOrder(order._id);
+    return res.status(200).json({ title: "Comanda marchada", message: "Cocina ya puede prepararla.", data: populated });
+  } catch (error) {
+    console.error("orderController.fireOrder:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "Ocurrió un problema interno. Intenta de nuevo más tarde." });
+  }
+};
+
+// "Yo la llevo": el mesero avisa que va a llevar una comanda lista a la mesa
+// (claim: true) o deja de llevarla (claim: false). Es solo un aviso para los
+// demás meseros; cualquiera puede marcarla servida.
+orderController.claimOrder = async (req, res) => {
+  try {
+    const claim = req.body?.claim !== false;
+    let update;
+    if (claim) {
+      const employee = await EmployeeModel.findById(req.user.id).select('personalInfo.name personalInfo.lastname').lean();
+      update = { $set: { servingBy: { id: req.user.id, name: employeeName(employee), at: new Date() } } };
+    } else {
+      update = { $unset: { servingBy: "" } };
+    }
+    const filter = claim
+      ? { _id: req.params.id, status: 'ready' }
+      : { _id: req.params.id, 'servingBy.id': req.user.id };
+    const order = await Order.findOneAndUpdate(filter, update, { new: true });
+    if (!order) {
+      return res.status(409).json({
+        title: "No se pudo actualizar",
+        message: claim ? "Esta comanda ya no está lista para llevarse." : "Esta comanda no la llevabas tú.",
+      });
+    }
+    const populated = await emitOrder(order._id);
+    return res.status(200).json({ message: claim ? "La llevas tú" : "Ya no la llevas", data: populated });
+  } catch (error) {
+    console.error("orderController.claimOrder:", error);
+    return res.status(500).json({ title: "Error del servidor", message: "Ocurrió un problema interno. Intenta de nuevo más tarde." });
   }
 };
 

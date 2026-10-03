@@ -190,6 +190,32 @@ const orderSchema = new Schema({
     enum: ['pending', 'preparing', 'ready', 'delivered', 'cancelled', 'atrasado'],
     default: 'pending'
   },
+  // --- Servicio en mesa (comandas del mesero) ---
+  // Ronda de la cuenta de la mesa: 1 la primera comanda, 2 lo que se pidió
+  // después ("algo más"), etc. Cada ronda es una comanda aparte para cocina,
+  // pero todas se cobran juntas en la cuenta de la mesa.
+  round: { type: Number, min: 1 },
+  // Tiempo dentro de la ronda: 1 = sale primero (bebidas, entradas), 2 =
+  // después (plato fuerte). Sin tiempo = todo junto.
+  course: { type: Number, enum: [1, 2] },
+  // En espera: el mesero pidió que cocina no la empiece hasta su aviso
+  // ("marchar", ver orderController.fireOrder). Sigue en "pending".
+  waiting: { type: Boolean, default: false },
+  firedAt: { type: Date },
+  // "Yo la llevo": el mesero que va a llevar la comanda lista a la mesa. Es
+  // un aviso para los demás, no un candado: cualquiera puede servirla.
+  servingBy: {
+    id: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+    name: { type: String },
+    at: { type: Date },
+  },
+  // Quién la sirvió (puede ser otro mesero distinto del que la tomó).
+  servedBy: {
+    id: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+    name: { type: String },
+    at: { type: Date },
+  },
+
   // "Agregar más productos": el cliente pausó el pedido mientras seguía
   // "Recibido" para sumarle productos (ver utils/orders/orderHoldUtils.js).
   // Una sola vez por pedido y por 10 min.

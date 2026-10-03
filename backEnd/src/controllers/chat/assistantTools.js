@@ -10,6 +10,7 @@
 //   - `run(args, req)`: ejecuta la acción real contra Mongo. Nunca lanza:
 //     siempre devuelve { success, ...} para que el controller decida cómo seguir.
 import SaucersModel from "../../models/menu/saucersModel.js";
+import { WAITER_POPULATE } from "../../utils/orders/waiterPopulate.js";
 import DrinksModel from "../../models/menu/drinksModel.js";
 import ExtrasModel from "../../models/menu/extrasModel.js";
 import CombosModel from "../../models/menu/combosModel.js";
@@ -120,7 +121,7 @@ const getOrders = {
     if (args.orderType) filter.orderType = args.orderType;
     const orders = await Order.find(filter)
       .populate("table", "number")
-      .populate("waiter", "name lastname")
+      .populate(WAITER_POPULATE)
       .sort({ createdAt: -1 })
       .limit(Math.min(Number(args.limit) || 10, 30))
       .lean();

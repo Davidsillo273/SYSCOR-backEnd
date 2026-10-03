@@ -14,6 +14,7 @@
 //     en la cola (se ordena por fecha de creación), así el cliente no pierde
 //     turno por pausar.
 import Order from "../../models/orders/orderModel.js";
+import { WAITER_POPULATE } from "./waiterPopulate.js";
 import Checkout from "../../models/orders/checkoutModel.js";
 import notificationUtils from "../notifications/notificationUtils.js";
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
@@ -49,7 +50,7 @@ export const notOnHoldFilter = () => ({ "hold.active": { $ne: true } });
 export const emitOrder = async (orderId) => {
     const populated = await Order.findById(orderId)
         .populate("table", "number status")
-        .populate("waiter", "name lastname")
+        .populate(WAITER_POPULATE)
         .populate("customer", "personalInfo");
     if (populated) emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: populated.toObject() });
     return populated;

@@ -2,6 +2,7 @@ const tablesController = {};
 
 // Importamos el modelo de las mesas para interactuar con la base de datos
 import TablesModel, { TABLE_ZONES } from "../../models/tables/tablesModel.js";
+import { WAITER_POPULATE } from "../../utils/orders/waiterPopulate.js";
 import { syncReservations } from "../../utils/tables/reservationUtils.js";
 import Order from "../../models/orders/orderModel.js";
 // Utilidad para registrar los movimientos como notificaciones del sistema
@@ -28,7 +29,7 @@ const emitCancelledOrdersOfTables = async (tableIds) => {
     status: 'cancelled',
   })
     .populate('table', 'number status')
-    .populate('waiter', 'name lastname')
+    .populate(WAITER_POPULATE)
     .populate('customer', 'personalInfo');
 
   for (const order of cancelledOrders) {
