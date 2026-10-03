@@ -5,6 +5,7 @@ import Combos from "../../models/menu/combosModel.js";
 import Drinks from "../../models/menu/drinksModel.js";
 import Extras from "../../models/menu/extrasModel.js";
 import Saucers from "../../models/menu/saucersModel.js";
+import { buildItems } from "./checkoutController.js";
 import TablesModel from "../../models/tables/tablesModel.js";
 import AdminModel from "../../models/users/adminModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
@@ -129,6 +130,9 @@ orderController.createOrder = async (req, res) => {
       // Sin método queda "por definir": se fija al cobrar la cuenta de la mesa
       // (ver checkoutTable).
       orderFields.paymentMethod = paymentMethod || undefined;
+      // Pedido del local: siempre es para comer en el restaurante.
+      orderFields.fulfillment = 'dine_in';
+      orderFields.isDelivery = false;
     } else {
       const {
         customer, isDelivery, deliveryAddress, paymentMethod,
@@ -173,6 +177,27 @@ orderController.createOrder = async (req, res) => {
     const processedItems = [];
 
     for (let item of items) {
+      // Producto con el formato del carrito de la app de clientes
+      // (productType, productId, bebida, platillos elegidos, ingredientes
+      // quitados, extras...): lo manda el menú del mesero. Se arma con la
+      // misma función del checkout, que recalcula los precios en la base.
+      if (item?.productType) {
+        const built = await buildItems([item]);
+        if (built.error) {
+          return res.status(400).json({ title: "No se pudo tomar la orden", message: built.error });
+        }
+        // Comentario libre del mesero para ese producto ("bien dorado").
+        const comment = typeof item.comment === 'string' ? item.comment.trim().slice(0, 120) : '';
+        if (comment && built.items[0]) {
+          built.items[0].notes = [built.items[0].notes, `Nota: ${comment}`].filter(Boolean).join(' · ').slice(0, 300);
+        }
+        for (const line of built.items) {
+          processedItems.push(line);
+          total += line.price * line.quantity;
+        }
+        continue;
+      }
+
       let model;
       switch (item.itemType) {
         case 'combo': model = Combos; break;

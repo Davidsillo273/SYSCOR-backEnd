@@ -888,4 +888,9 @@ checkoutController.wompiWebhook = async (req, res) => {
     return res.status(200).json({ received: true });
 };
 
+// La comanda del mesero (orderController.createOrder) arma sus productos
+// personalizados con esta misma función: mismos precios, cambio de bebida,
+// extras e ingredientes que el carrito de la app de clientes.
+export { buildItems };
+
 export default checkoutController;
