@@ -73,7 +73,7 @@ router
    *       500:
    *         description: Error interno del servidor.
    */
-  router.get("/active", validateAuthCookie(["customer", "admin"]), saucersController.getActiveSaucers);
+  router.get("/active", validateAuthCookie(["customer", "admin", "employee"]), saucersController.getActiveSaucers);
 
   // Ranking de platillos más vendidos
   /**

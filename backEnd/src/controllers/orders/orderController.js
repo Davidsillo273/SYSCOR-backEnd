@@ -4,6 +4,7 @@ import Invoice from "../../models/orders/invoiceModel.js";
 import Combos from "../../models/menu/combosModel.js";
 import Drinks from "../../models/menu/drinksModel.js";
 import Extras from "../../models/menu/extrasModel.js";
+import Saucers from "../../models/menu/saucersModel.js";
 import TablesModel from "../../models/tables/tablesModel.js";
 import AdminModel from "../../models/users/adminModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
@@ -122,7 +123,9 @@ orderController.createOrder = async (req, res) => {
       orderFields.waiter = waiter;
       orderFields.localCustomerName = localCustomerName?.trim() || tableDoc.customerName || undefined;
       orderFields.notes = typeof notes === 'string' && notes.trim() ? notes.trim().slice(0, 300) : undefined;
-      orderFields.paymentMethod = paymentMethod || 'cash';
+      // Sin método queda "por definir": se fija al cobrar la cuenta de la mesa
+      // (ver checkoutTable).
+      orderFields.paymentMethod = paymentMethod || undefined;
     } else {
       const {
         customer, isDelivery, deliveryAddress, paymentMethod,
@@ -172,6 +175,8 @@ orderController.createOrder = async (req, res) => {
         case 'combo': model = Combos; break;
         case 'extra': model = Extras; break;
         case 'drink': model = Drinks; break;
+        // Platillo suelto: lo usan la app de clientes y el menú del mesero.
+        case 'saucer': model = Saucers; break;
         default: return res.status(400).json({ message: `Invalid item type: ${item.itemType}` });
       }
 
@@ -780,6 +785,9 @@ orderController.checkoutTable = async (req, res) => {
       }
       await order.save();
       total += order.total || 0;
+      // Si la comanda ya se había servido, su factura se generó sin método de
+      // pago ("por definir"): se completa ahora.
+      if (wasDelivered) await Invoice.updateOne({ order: order._id }, { $set: { paymentMethod } });
 
       const populated = await Order.findById(order._id)
         .populate('table', 'number status')
