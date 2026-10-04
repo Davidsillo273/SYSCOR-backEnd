@@ -33,7 +33,7 @@ const router = express.Router();
  *             required: [number]
  *             properties:
  *               number: { type: number, example: 5 }
- *               status: { type: string, example: "libre", description: "'libre', 'ocupada', 'limpieza' o 'reservada'" }
+ *               status: { type: string, example: "libre", description: "'libre', 'ocupada' o 'reservada'" }
  *     responses:
  *       201:
  *         description: Mesa agregada correctamente.
@@ -54,7 +54,7 @@ router
  * /tables/status-all:
  *   put:
  *     summary: Actualiza el estado de todas las mesas a la vez
- *     description: Empleado o admin. Pone el mismo estado a todas las mesas (por ejemplo, al abrir el local). Si el nuevo estado es "libre" o "limpieza", cancela los pedidos activos (pending/preparing/ready) de las mesas que cambiaron de estado.
+ *     description: Empleado o admin. Pone el mismo estado a todas las mesas (por ejemplo, al abrir el local). Si el nuevo estado es "libre", cancela los pedidos activos (pending/preparing/ready) de las mesas que cambiaron de estado.
  *     tags: [Mesas]
  *     security: [{ cookieAuth: [] }]
  *     requestBody:
@@ -65,7 +65,7 @@ router
  *             type: object
  *             required: [status]
  *             properties:
- *               status: { type: string, example: "libre", description: "'libre', 'ocupada', 'limpieza' o 'reservada'" }
+ *               status: { type: string, example: "libre", description: "'libre', 'ocupada' o 'reservada'" }
  *     responses:
  *       200:
  *         description: "Mesas actualizadas. Devuelve title, message y data.updated con la cantidad de mesas modificadas."
@@ -83,7 +83,7 @@ router.put("/status-all", validateAuthCookie(["employee", "admin"]), tablesContr
  * /tables/{id}:
  *   put:
  *     summary: Actualiza una mesa
- *     description: Empleado o admin. Actualiza el número y/o estado de una mesa. Si pasa a "libre" o "limpieza", cancela los pedidos activos (pending/preparing/ready) de esa mesa.
+ *     description: Empleado o admin. Actualiza el número y/o estado de una mesa. Si pasa a "libre", cancela los pedidos activos (pending/preparing/ready) de esa mesa.
  *     tags: [Mesas]
  *     security: [{ cookieAuth: [] }]
  *     parameters:
@@ -99,7 +99,7 @@ router.put("/status-all", validateAuthCookie(["employee", "admin"]), tablesContr
  *             type: object
  *             properties:
  *               number: { type: number, example: 5 }
- *               status: { type: string, example: "ocupada", description: "'libre', 'ocupada', 'limpieza' o 'reservada'" }
+ *               status: { type: string, example: "ocupada", description: "'libre', 'ocupada' o 'reservada'" }
  *     responses:
  *       200:
  *         description: "Mesa actualizada. Devuelve title, message y data con la mesa actualizada."

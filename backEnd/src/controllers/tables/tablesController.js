@@ -8,7 +8,7 @@ import Order from "../../models/orders/orderModel.js";
 // Utilidad para registrar los movimientos como notificaciones del sistema
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 // Tiempo real: el panel de mesas se actualiza solo cuando una mesa se ocupa,
-// se desocupa o pasa a limpieza, sin recargar ni sondear cada 30 segundos.
+// o se desocupa, sin recargar ni sondear cada 30 segundos.
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 
 // Quiénes ven los cambios de mesas en vivo. Es el mismo público que ya define
@@ -17,7 +17,7 @@ import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
 const TABLES_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.tables;
 const ORDERS_AUDIENCE = notificationUtils.AUDIENCE_BY_CATEGORY.orders;
 
-// Liberar u ordenar la limpieza de una mesa cancela sus comandas activas.
+// Liberar una mesa cancela sus comandas activas.
 // Ese cambio ocurre en la colección de pedidos, no en la de mesas, así que
 // hay que avisarlo por el canal de órdenes: si no, la pantalla de pedidos
 // seguiría mostrando comandas de una mesa que ya se desocupó.
@@ -70,6 +70,8 @@ tablesController.getTables = async (req, res) => {
   try {
     // Las reservas de la app apartan y sueltan mesas según la hora.
     await syncReservations();
+    // El estado 'limpieza' ya no existe: las mesas que lo tenían quedan libres.
+    await TablesModel.updateMany({ status: 'limpieza' }, { $set: { status: 'libre' } });
     const tables = await TablesModel.find();
     return res.status(200).json(tables);
   } catch (error) {
@@ -155,7 +157,7 @@ tablesController.updateTable = async (req, res) => {
     if (layout.error) return res.status(400).json({ message: layout.error });
 
     // Validar que el estado sea uno de los permitidos
-    const validStatuses = ['libre', 'ocupada', 'limpieza', 'reservada'];
+    const validStatuses = ['libre', 'ocupada', 'reservada'];
     if (status && !validStatuses.includes(status)) {
       return res.status(400).json({ message: "Estado no válido" });
     }
@@ -209,8 +211,8 @@ tablesController.updateTable = async (req, res) => {
       { new: true }
     );
 
-    // Si la mesa pasa a 'libre' o 'limpieza', cancelar todas las órdenes activas
-    if (status && ['libre', 'limpieza'].includes(status) && previousTable.status !== status) {
+    // Si la mesa pasa a libre, cancelar todas las órdenes activas
+    if (status === 'libre' && previousTable.status !== status) {
       await Order.updateMany(
         { table: tableUpdated._id, status: { $in: ['pending', 'preparing', 'ready'] } },
         { $set: { status: 'cancelled' } }
@@ -247,13 +249,13 @@ tablesController.updateTable = async (req, res) => {
 
 // Pone el mismo estado a TODAS las mesas de una vez (ej. "poner disponibles
 // todas las mesas" al abrir el local). Igual que updateTable, si el nuevo
-// estado es 'libre' o 'limpieza' se cancelan los pedidos activos de las
+// estado es libre se cancelan los pedidos activos de las
 // mesas que estaban ocupadas, para no dejar comandas huérfanas.
 tablesController.bulkUpdateStatus = async (req, res) => {
   try {
     const { status } = req.body;
 
-    const validStatuses = ['libre', 'ocupada', 'limpieza', 'reservada'];
+    const validStatuses = ['libre', 'ocupada', 'reservada'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ title: "Estado inválido", message: "El estado no es válido." });
     }
@@ -263,7 +265,7 @@ tablesController.bulkUpdateStatus = async (req, res) => {
       return res.status(200).json({ title: "Sin mesas", message: "No hay mesas registradas.", data: { updated: 0 } });
     }
 
-    if (['libre', 'limpieza'].includes(status)) {
+    if (status === 'libre') {
       const tableIdsChanging = tables.filter((t) => t.status !== status).map((t) => t._id);
       if (tableIdsChanging.length > 0) {
         await Order.updateMany(

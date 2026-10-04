@@ -89,7 +89,7 @@ const getInventoryStatus = {
 const getTablesStatus = {
   declaration: {
     name: "get_tables_status",
-    description: "Consulta el estado actual de todas las mesas (libre, ocupada, en limpieza, reservada).",
+    description: "Consulta el estado actual de todas las mesas (libre, ocupada, reservada).",
     parameters: { type: "OBJECT", properties: {} },
   },
   permission: "tables",
@@ -389,7 +389,7 @@ const updateTableStatus = {
       type: "OBJECT",
       properties: {
         tableNumber: { type: "NUMBER", description: "Número de la mesa" },
-        status: { type: "STRING", enum: ["libre", "ocupada", "limpieza", "reservada"] },
+        status: { type: "STRING", enum: ["libre", "ocupada", "reservada"] },
       },
       required: ["tableNumber", "status"],
     },
@@ -397,7 +397,7 @@ const updateTableStatus = {
   permission: "tables_change_status",
   formFields: [
     { name: "tableNumber", label: "Número de mesa", type: "number", required: true },
-    { name: "status", label: "Nuevo estado", type: "select", required: true, options: ["libre", "ocupada", "limpieza", "reservada"] },
+    { name: "status", label: "Nuevo estado", type: "select", required: true, options: ["libre", "ocupada", "reservada"] },
   ],
   run: async (args) => {
     const table = await TablesModel.findOne({ number: num(args.tableNumber) });

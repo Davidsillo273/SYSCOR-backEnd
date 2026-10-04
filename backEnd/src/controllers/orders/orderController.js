@@ -301,7 +301,7 @@ orderController.getOrders = async (req, res) => {
     if (req.query.scheduled === 'true') filter.scheduledFor = { $ne: null };
 
     const orders = await Order.find(filter)
-      .populate('table', 'number status peopleCount')
+      .populate('table', 'number status peopleCount floor')
       .populate(WAITER_POPULATE)
       .populate('customer', 'personalInfo loginInfo.email')
       .sort({ createdAt: -1 });
