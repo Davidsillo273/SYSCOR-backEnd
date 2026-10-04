@@ -5,6 +5,7 @@ import "./database.js";
 import { initSocket } from "./src/config/socket.js";
 import { syncReservations } from "./src/utils/tables/reservationUtils.js";
 import { releaseExpiredHolds } from "./src/utils/orders/orderHoldUtils.js";
+import { migrateRetiredEmployeeTypes } from "./src/utils/users/employeeTypeMigration.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
 // ahí; en local seguimos usando el 4000 de siempre.
@@ -24,6 +25,10 @@ async function main() {
     initSocket(server, allowedOrigins);
 
     server.listen(PORT);
+
+    // Los puestos de empleado "gerente", "limpieza" y "otro" ya no existen:
+    // quien los tuviera pasa a un puesto vigente.
+    migrateRetiredEmployeeTypes().catch((error) => console.error("migrateRetiredEmployeeTypes:", error));
 
     // Reservas de mesa de la app: apartar la mesa antes de la hora y soltarla
     // si el cliente no llegó. También se revisa al consultar mesas o reservas,

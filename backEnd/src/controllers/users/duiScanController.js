@@ -316,48 +316,4 @@ duiScanController.scanFromSession = async (req, res) => {
   }
 };
 
-/**
- * Sube los documentos sueltos del expediente (comprobante de domicilio y
- * antecedentes penales).
- *
- * Van por aquí y no por /send-invitation porque esa ruta recibe JSON: el
- * flujo es el mismo que el del DUI — primero las imágenes quedan en
- * Cloudinary, después sus URLs viajan dentro de la invitación. Ambos son
- * opcionales; si no se manda ninguno se devuelve un objeto vacío y el
- * empleado quedará marcado como expediente incompleto.
- */
-duiScanController.uploadEmployeeDocuments = async (req, res) => {
-  try {
-    const proof = req.files?.proofOfAddress?.[0];
-    const record = req.files?.criminalRecord?.[0];
-
-    const [proofOfAddress, criminalRecord] = await Promise.all([
-      uploadToCloudinary(proof),
-      uploadToCloudinary(record),
-    ]);
-
-    const documents = {};
-    if (proofOfAddress) documents.proofOfAddress = proofOfAddress;
-    if (criminalRecord) documents.criminalRecord = criminalRecord;
-
-    // Que un archivo llegue y no se pueda guardar sí es un error: si se
-    // respondiera 200 el admin creería que el expediente quedó completo.
-    if ((proof && !proofOfAddress) || (record && !criminalRecord)) {
-      return res.status(502).json({
-        title: "Error al guardar",
-        message: "No se pudieron guardar los documentos. Intenta de nuevo.",
-      });
-    }
-
-    return res.status(200).json({
-      title: "Documentos guardados",
-      message: "Los documentos quedaron listos para adjuntarse al expediente.",
-      documents,
-    });
-  } catch (error) {
-    console.error("duiScanController.uploadEmployeeDocuments:", error);
-    return res.status(500).json({ title: "Error del servidor", message: "No se pudieron guardar los documentos." });
-  }
-};
-
 export default duiScanController;

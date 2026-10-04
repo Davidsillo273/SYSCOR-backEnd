@@ -193,7 +193,7 @@ const getEmployees = {
     parameters: {
       type: "OBJECT",
       properties: {
-        type: { type: "STRING", enum: ["kitchen", "waiter", "cashier", "manager", "cleaner", "delivery", "other"] },
+        type: { type: "STRING", enum: ["kitchen", "waiter", "cashier", "delivery"] },
       },
     },
   },

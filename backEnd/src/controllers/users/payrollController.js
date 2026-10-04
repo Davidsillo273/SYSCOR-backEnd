@@ -15,10 +15,7 @@ const EMPLOYEE_TYPE_LABELS = {
     kitchen: "Cocina",
     waiter: "Mesero",
     cashier: "Cajero",
-    manager: "Gerente",
-    cleaner: "Limpieza",
     delivery: "Repartidor",
-    other: "Otro",
 };
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;

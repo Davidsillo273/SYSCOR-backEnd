@@ -34,10 +34,7 @@ const EMPLOYEE_TYPE_LABELS = {
     kitchen: "Cocina",
     waiter: "Mesero",
     cashier: "Cajero",
-    manager: "Gerente",
-    cleaner: "Limpieza",
     delivery: "Repartidor",
-    other: "Otro",
 };
 
 // Traducciones del rol para redactar mensajes

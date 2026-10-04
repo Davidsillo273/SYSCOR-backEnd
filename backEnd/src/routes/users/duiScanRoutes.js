@@ -109,40 +109,6 @@ router.route("/session/:token/scan").post(...guard, duiScanController.scanFromSe
  */
 router.route("/session/:token").get(...guard, duiScanController.getSessionStatus);
 
-/**
- * @swagger
- * /users/dui-scan/documents:
- *   post:
- *     summary: Sube los documentos sueltos del expediente del empleado
- *     description: >
- *       Guarda el comprobante de domicilio y los antecedentes penales en
- *       Cloudinary y devuelve sus URLs, para adjuntarlas a la invitación.
- *       Ambos son opcionales. Requiere el permiso "invite_staff".
- *     tags: [Usuarios - Empleados]
- *     security:
- *       - cookieAuth: []
- *     requestBody:
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               proofOfAddress: { type: string, format: binary, description: Recibo de agua o luz }
- *               criminalRecord: { type: string, format: binary, description: Solvencia de antecedentes penales }
- *     responses:
- *       200: { description: URLs de los documentos guardados. }
- *       403: { description: Sin el permiso "invite_staff". }
- *       502: { description: Un archivo llegó pero no se pudo guardar. }
- */
-router.route("/documents").post(
-  ...guard,
-  uploadToMemory.fields([
-    { name: "proofOfAddress", maxCount: 1 },
-    { name: "criminalRecord", maxCount: 1 },
-  ]),
-  duiScanController.uploadEmployeeDocuments
-);
-
 // --- Rutas públicas: las usa el TELÉFONO, que no tiene sesión iniciada ---
 //
 // El control de acceso lo da el token del QR: es aleatorio, de un solo uso,

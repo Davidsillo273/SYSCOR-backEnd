@@ -15,7 +15,7 @@ const employeeSchema = new mongoose.Schema(
       type: {
         type: String,
         required: true,
-        enum: ["kitchen", "waiter", "cashier", "manager", "cleaner", "delivery", "other"],
+        enum: ["kitchen", "waiter", "cashier", "delivery"],
       },
 
       // --- Datos extraídos del DUI al invitar (ver duiScanController) ---
@@ -46,15 +46,6 @@ const employeeSchema = new mongoose.Schema(
         publicId: { type: String, default: null },
       },
       duiBack: {
-        url: { type: String, default: null },
-        publicId: { type: String, default: null },
-      },
-      // Recibo de agua/luz a nombre del empleado
-      proofOfAddress: {
-        url: { type: String, default: null },
-        publicId: { type: String, default: null },
-      },
-      criminalRecord: {
         url: { type: String, default: null },
         publicId: { type: String, default: null },
       },
@@ -168,13 +159,10 @@ const employeeSchema = new mongoose.Schema(
 employeeSchema.virtual("missingFields").get(function getMissingFields() {
   const missing = [];
   const work = this.workInfo || {};
-  const docs = this.documents || {};
 
   if (!work.isssNumber) missing.push("Número de ISSS");
   if (!work.afpInstitution) missing.push("Institución de AFP");
   if (!work.bankName || !work.bankAccount) missing.push("Cuenta bancaria");
-  if (!docs.proofOfAddress?.url) missing.push("Comprobante de domicilio");
-  if (!docs.criminalRecord?.url) missing.push("Antecedentes penales");
 
   return missing;
 });
