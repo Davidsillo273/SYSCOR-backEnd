@@ -71,7 +71,9 @@ app.use(attachUser);
 // Pantallas de cocina (KDS): si la petición trae un token de dispositivo, se
 // identifica aquí (y se rechaza con 401 si ya no vale). Esa identidad solo
 // abre las rutas de /kitchen; cualquier otra ruta protegida le responde 403.
-app.use(attachKitchenDevice(`${api}/kitchen`));
+// La ruta base se normaliza ("api", "/api/", "//api" -> "/api"): si el
+// prefijo no coincide exacto, toda petición de la pantalla recibiría 403.
+app.use(attachKitchenDevice(`/${api.replace(/^\/+|\/+$/g, "")}/kitchen`.replace(/\/+/g, "/")));
 
 // Limitador de peticiones global (por usuario con sesión, por IP sin ella):
 // protege la API completa contra abuso sin afectar el uso normal del panel. Las rutas de
