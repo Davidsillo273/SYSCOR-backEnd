@@ -47,7 +47,7 @@ const uploadToCloudinary = async (file) => {
  * Lee las dos caras del DUI y devuelve los campos extraídos.
  *
  * Recibe las imágenes como archivos (multipart) en "front" y "back", las
- * guarda en Cloudinary y le pasa el contenido a Gemini. Devuelve tanto los
+ * guarda en Cloudinary y le pasa el contenido a la IA (Groq). Devuelve tanto los
  * datos leídos como las URLs, porque la invitación va a necesitar ambas
  * cosas: los campos para el formulario y las fotos para el expediente.
  */
@@ -275,7 +275,7 @@ duiScanController.scanFromSession = async (req, res) => {
     }
 
     // Las imágenes ya están en Cloudinary: se descargan para poder
-    // mandárselas a Gemini como base64 (no acepta URLs remotas).
+    // mandárselas a la IA como base64 (no acepta URLs remotas).
     const toBase64 = async (url) => {
       if (!url) return null;
       const response = await fetch(url);

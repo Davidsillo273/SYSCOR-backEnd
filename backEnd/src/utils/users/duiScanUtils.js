@@ -1,4 +1,4 @@
-// Lectura del DUI salvadoreño con Gemini Vision.
+// Lectura del DUI salvadoreño con un modelo de visión (Groq; Gemini de respaldo).
 //
 // Se usa al invitar a un empleado: en vez de que el admin teclee el nombre,
 // el número de documento, la fecha de nacimiento y la dirección (que es
@@ -8,10 +8,12 @@
 // no la reemplaza.
 //
 // Mismas reglas que el resto de los utils de IA del proyecto: si no hay API
-// key, si Gemini tarda o responde algo inesperado, se devuelve null y el
+// key, si la IA tarda o responde algo inesperado, se devuelve null y el
 // admin simplemente llena los campos a mano. Nunca se lanza un error que
 // tumbe el flujo.
 import { config } from "../../../config.js";
+
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
 const GEMINI_ENDPOINT = (model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -45,7 +47,7 @@ Reglas importantes:
 - La fecha de nacimiento en el documento suele estar como DD-MM-AAAA: conviértela a AAAA-MM-DD.
 - Devuelve SOLO el JSON, sin explicaciones.`;
 
-// Los valores que el modelo de empleado acepta. Si Gemini devuelve algo
+// Los valores que el modelo de empleado acepta. Si la IA devuelve algo
 // fuera de esta lista (por una lectura dudosa), se descarta ese campo en
 // vez de guardar basura que después rompa la validación de Mongoose.
 const VALID_GENDERS = ["masculino", "femenino"];
@@ -89,8 +91,104 @@ const cleanText = (value) => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+// Lo que no pase la validación queda en null y el admin lo llena a mano,
+// que es justo para lo que existe la pantalla de revisión.
+const normalizeExtraction = (raw) => ({
+  duiNumber: normalizeDui(raw.duiNumber),
+  names: cleanText(raw.names),
+  lastNames: cleanText(raw.lastNames),
+  birthDate: normalizeBirthDate(raw.birthDate),
+  gender: pickFromList(raw.gender, VALID_GENDERS),
+  maritalStatus: pickFromList(raw.maritalStatus, VALID_MARITAL_STATUS),
+  address: cleanText(raw.address),
+});
+
+const parseJson = (text, provider) => {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    console.error(`duiScanUtils: ${provider} no devolvió JSON válido`);
+    return null;
+  }
+};
+
+// Groq habla el formato de OpenAI: las imágenes van como data URL dentro de
+// "image_url". Ojo: Groq rechaza peticiones con imágenes base64 de más de 4 MB.
+const extractWithGroq = async (images) => {
+  const apiKey = config.groq.apiKey;
+  if (!apiKey) return null;
+
+  const response = await fetch(GROQ_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: config.groq.visionModel,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: EXTRACTION_PROMPT },
+            ...images.map(({ mimeType, data }) => ({
+              type: "image_url",
+              image_url: { url: `data:${mimeType};base64,${data}` },
+            })),
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+      // Temperatura baja: acá no se quiere creatividad, se quiere que
+      // transcriba lo que ve en el documento.
+      temperature: 0.1,
+    }),
+    // Leer dos imágenes tarda más que un prompt de texto suelto.
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    console.error("duiScanUtils: respuesta no OK de Groq", response.status, errorBody);
+    return null;
+  }
+
+  const data = await response.json();
+  return parseJson(data?.choices?.[0]?.message?.content, "Groq");
+};
+
+const extractWithGemini = async (images) => {
+  const apiKey = config.gemini.apiKey;
+  if (!apiKey) return null;
+
+  const response = await fetch(`${GEMINI_ENDPOINT(config.gemini.model)}?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { text: EXTRACTION_PROMPT },
+            ...images.map(({ mimeType, data }) => ({ inline_data: { mime_type: mimeType, data } })),
+          ],
+        },
+      ],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    console.error("duiScanUtils: respuesta no OK de Gemini", response.status, errorBody);
+    return null;
+  }
+
+  const data = await response.json();
+  return parseJson(data?.candidates?.[0]?.content?.parts?.[0]?.text, "Gemini");
+};
+
 /**
  * Lee las dos caras del DUI y devuelve los campos que se pudieron extraer.
+ * Se intenta primero con Groq y, si falla o no tiene clave, con Gemini.
  *
  * @param {Object} images
  * @param {{mimeType: string, data: string}} images.front  Anverso en base64
@@ -99,9 +197,8 @@ const cleanText = (value) => {
  *   null), o null si la IA no estaba disponible.
  */
 export const extractDuiData = async ({ front, back }) => {
-  const apiKey = config.gemini.apiKey;
-  if (!apiKey) {
-    console.warn("duiScanUtils: GEMINI_API_KEY no configurada, no se puede escanear el DUI.");
+  if (!config.groq.apiKey && !config.gemini.apiKey) {
+    console.warn("duiScanUtils: no hay GROQ_API_KEY ni GEMINI_API_KEY, no se puede escanear el DUI.");
     return null;
   }
 
@@ -112,64 +209,21 @@ export const extractDuiData = async ({ front, back }) => {
 
   // El reverso es opcional a nivel técnico (el anverso ya trae casi todo),
   // pero sin él no se puede leer el domicilio.
-  const imageParts = [
-    { inline_data: { mime_type: front.mimeType || "image/jpeg", data: front.data } },
-    ...(back?.data
-      ? [{ inline_data: { mime_type: back.mimeType || "image/jpeg", data: back.data } }]
-      : []),
-  ];
+  const images = [front, ...(back?.data ? [back] : [])].map(({ mimeType, data }) => ({
+    mimeType: mimeType || "image/jpeg",
+    data,
+  }));
 
-  try {
-    const response = await fetch(`${GEMINI_ENDPOINT(config.gemini.model)}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: EXTRACTION_PROMPT }, ...imageParts] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          // Temperatura baja: acá no se quiere creatividad, se quiere que
-          // transcriba lo que ve en el documento.
-          temperature: 0.1,
-        },
-      }),
-      // Leer dos imágenes tarda más que un prompt de texto suelto.
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      console.error("duiScanUtils: respuesta no OK de Gemini", response.status, errorBody);
-      return null;
-    }
-
-    const data = await response.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return null;
-
-    let raw;
+  for (const [provider, extract] of [["Groq", extractWithGroq], ["Gemini", extractWithGemini]]) {
     try {
-      raw = JSON.parse(text);
-    } catch {
-      console.error("duiScanUtils: Gemini no devolvió JSON válido");
-      return null;
+      const raw = await extract(images);
+      if (raw) return normalizeExtraction(raw);
+    } catch (error) {
+      console.error(`duiScanUtils.extractDuiData (${provider}):`, error.message);
     }
-
-    // Se normaliza TODO antes de devolverlo: lo que no pase la validación
-    // queda en null y el admin lo llena a mano, que es justo para lo que
-    // existe la pantalla de revisión.
-    return {
-      duiNumber: normalizeDui(raw.duiNumber),
-      names: cleanText(raw.names),
-      lastNames: cleanText(raw.lastNames),
-      birthDate: normalizeBirthDate(raw.birthDate),
-      gender: pickFromList(raw.gender, VALID_GENDERS),
-      maritalStatus: pickFromList(raw.maritalStatus, VALID_MARITAL_STATUS),
-      address: cleanText(raw.address),
-    };
-  } catch (error) {
-    console.error("duiScanUtils.extractDuiData:", error.message);
-    return null;
   }
+
+  return null;
 };
 
 export default { extractDuiData };

@@ -24,7 +24,7 @@ const guard = [validateAuthCookie(["admin", "employee"]), requirePermission("inv
  *     summary: Lee un DUI y extrae los datos del empleado
  *     description: >
  *       Recibe las fotos del anverso y reverso del DUI, las guarda en
- *       Cloudinary y usa Gemini Vision para extraer nombre, apellidos,
+ *       Cloudinary y usa IA con visión (Groq) para extraer nombre, apellidos,
  *       número de documento, fecha de nacimiento, sexo, estado familiar y
  *       domicilio. Los campos que no se puedan leer vuelven en null para que
  *       el admin los complete a mano. Requiere el permiso "invite_staff".

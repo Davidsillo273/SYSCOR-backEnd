@@ -77,7 +77,9 @@ export const config = {
     // luego OpenRouter. Sin clave, ese proveedor simplemente se salta.
     groq: {
         apiKey: process.env.GROQ_API_KEY,
-        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b"
+        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
+        // Modelo con visión para leer el DUI (el de arriba solo entiende texto)
+        visionModel: process.env.GROQ_VISION_MODEL || "qwen/qwen3.8-27b"
     },
     openrouter: {
         apiKey: process.env.OPENROUTER_API_KEY,
