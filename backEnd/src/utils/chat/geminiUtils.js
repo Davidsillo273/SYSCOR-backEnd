@@ -9,42 +9,19 @@
 //   llamar y con qué argumentos. Quien llama a este archivo (el controller)
 //   es responsable de ejecutar la función de verdad y de mandarle el
 //   resultado de vuelta con sendFunctionResult.
-// - Si no hay API key, si Gemini tarda o responde algo inesperado: se
+// - Si ningún proveedor de IA responde (Gemini, Groq ni OpenRouter): se
 //   devuelve { type: "error" } o { type: "empty" }, nunca se lanza una
 //   excepción que tumbe el endpoint.
-import { config } from "../../../config.js";
+//
+// Desde que existe el respaldo en cascada, las peticiones no van directo a
+// Gemini: pasan por llmOrchestrator, que intenta Gemini, luego Groq y luego
+// OpenRouter, y SIEMPRE devuelve la respuesta con forma de Gemini. Todo lo de
+// abajo sigue igual; el nombre del archivo se queda por compatibilidad.
+import { generateContent } from "../ai/llmOrchestrator.js";
 
-const GEMINI_ENDPOINT = (model) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-
-const callGeminiRaw = async (body) => {
-  const apiKey = config.gemini.apiKey;
-  if (!apiKey) {
-    console.warn("geminiUtils(chat): GEMINI_API_KEY no configurada, se omite la llamada.");
-    return null;
-  }
-
-  try {
-    const response = await fetch(`${GEMINI_ENDPOINT(config.gemini.model)}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      // Un chat con function calling puede tardar un poco más que un prompt suelto
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      console.error("geminiUtils(chat): respuesta no OK de Gemini", response.status, errorBody);
-      return null;
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error("geminiUtils(chat):", error.message);
-    return null;
-  }
-};
+// Respuesta con forma de Gemini, o null si ningún proveedor contestó. Un chat
+// con function calling puede tardar un poco más que un prompt suelto.
+const callGeminiRaw = (body) => generateContent(body, { timeoutMs: 15000 });
 
 // Uso genérico: un prompt suelto sin historial ni herramientas. Devuelve el
 // texto crudo (no JSON parseado) o null si algo falló.

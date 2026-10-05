@@ -39,6 +39,21 @@ export const nextOrderCode = async (order, date = new Date()) => {
     return `${prefix}${day}-${String(counter.seq).padStart(2, "0")}`;
 };
 
+// Número de cocina: 1, 2, 3... en el orden en que llegan los pedidos del día
+// (hora de El Salvador), sin importar el tipo. El código ("CL27-03") sigue
+// siendo el identificador de siempre; este número es solo un apodo corto
+// para la cocina, fácil de leer en el ticket y de decirle a Chef Panchita
+// ("marca la orden 3 como lista"). Se reinicia cada día.
+export const nextKitchenNumber = async (date = new Date()) => {
+    const local = localDate(date);
+    const counter = await OrderCounter.findOneAndUpdate(
+        { _id: `${local.toISOString().slice(0, 10)}:COCINA` },
+        { $inc: { seq: 1 } },
+        { upsert: true, returnDocument: "after" },
+    );
+    return counter.seq;
+};
+
 // El código de un pedido (o de su id, si no se tiene el documento poblado).
 // Los pedidos anteriores a este sistema ya tienen código (scripts/backfillOrderCodes.js);
 // el recorte del id queda solo como respaldo.
@@ -65,4 +80,4 @@ export const normalizeOrderCode = (text) => {
     return `${match[1]}${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
 };
 
-export default { orderCodePrefix, nextOrderCode, orderCode, findOrderCode, normalizeOrderCode };
+export default { orderCodePrefix, nextOrderCode, nextKitchenNumber, orderCode, findOrderCode, normalizeOrderCode };

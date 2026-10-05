@@ -30,6 +30,21 @@ const settingsSchema = new Schema({
         tables: { type: Boolean, default: true },
         menu: { type: Boolean, default: true },
         clients: { type: Boolean, default: true }
+    },
+    // Sistema de Cocina (KDS, proyecto SYSCOR-kitchenSystem del frontend).
+    // Mientras está apagado, la pantalla de cocina se queda en su lobby de
+    // espera y los pedidos siguen el flujo manual de siempre (la app de
+    // empleados los pasa a preparación). Encendido, además, la cola de
+    // cocina avanza sola (ver utils/orders/kitchenQueueUtils.js).
+    kitchen: {
+        enabled: { type: Boolean, default: false },
+        // Minutos desde que se pidió una comanda para que su ticket se pinte
+        // de amarillo (demora) y de rojo parpadeante (superó el máximo).
+        warningMinutes: { type: Number, default: 10 },
+        maxMinutes: { type: Number, default: 15 },
+        // Último cambio del interruptor, para que el panel diga quién y cuándo
+        changedAt: { type: Date, default: null },
+        changedBy: { type: String, default: null }
     }
 }, {
     timestamps: true,

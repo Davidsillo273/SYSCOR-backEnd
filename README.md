@@ -189,6 +189,9 @@ MONGODB_URI=mongodb+srv://usuario:password@cluster.mongodb.net/syscor
 
 # JWT
 JWT_Secret_key=tu_secreto_jwt_aqui
+# Llave aparte para los tokens de las pantallas de cocina (KDS). Opcional:
+# si falta se deriva de JWT_Secret_key, pero en producción conviene definirla.
+JWT_DEVICE_SECRET_KEY=otro_secreto_para_pantallas_de_cocina
 
 # Correo (Nodemailer - Gmail)
 EMAIL_USER=tu_correo@gmail.com

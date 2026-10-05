@@ -18,6 +18,9 @@ import { Server } from "socket.io";
 import jsonwebtoken from "jsonwebtoken";
 import { config } from "../../config.js";
 import EmployeeModel from "../models/users/employeeModel.js";
+// Pantallas de cocina (KDS): su propio namespace, autenticado por token de
+// dispositivo en vez de cookie (ver kitchenSocket.js).
+import { initKitchenSocket, relayToKitchenDevices } from "./kitchenSocket.js";
 
 // Instancia única del servidor de sockets. Se llena en initSocket() y se lee
 // desde getIO(); mientras sea null, los emit son operaciones vacías (útil en
@@ -44,7 +47,21 @@ export const SOCKET_EVENTS = {
     // Captura del DUI desde el celular: la PC está esperando a que las
     // fotos lleguen del teléfono que escaneó el QR (ver duiScanController).
     DUI_CAPTURE_UPLOADED: "dui:capture_uploaded",
+    // Sistema de Cocina (KDS): el admin lo habilitó/deshabilitó o cambió sus
+    // tiempos. La pantalla de cocina sale (o vuelve) a su lobby al recibirlo.
+    KITCHEN_STATUS_CHANGED: "kitchen:status_changed",
+    // Al panel: se emparejó o se desvinculó una pantalla de cocina
+    KITCHEN_DEVICES_CHANGED: "kitchen:devices_changed",
 };
+
+// Eventos que, además de a los usuarios, se reenvían a las pantallas de
+// cocina emparejadas (recortados por kitchenSocket.relayToKitchenDevices).
+const KITCHEN_RELAYED_EVENTS = new Set([
+    SOCKET_EVENTS.ORDER_CREATED,
+    SOCKET_EVENTS.ORDER_UPDATED,
+    SOCKET_EVENTS.ORDER_DELETED,
+    SOCKET_EVENTS.KITCHEN_STATUS_CHANGED,
+]);
 
 /**
  * Lee la cookie de sesión del handshake y devuelve el token.
@@ -178,6 +195,10 @@ export const initSocket = (httpServer, allowedOrigins = []) => {
 
     io.use(authenticateSocket);
 
+    // Namespace "/kitchen" de las pantallas de cocina. El middleware de arriba
+    // solo aplica al namespace principal, así que no les exige cookie.
+    initKitchenSocket(io);
+
     io.on("connection", (socket) => {
         joinRooms(socket);
 
@@ -215,6 +236,9 @@ export const emitToRoles = (roles, event, payload) => {
         if (targets.length === 0) return;
 
         io.to(targets).emit(event, payload);
+
+        // Las comandas también le llegan a la cocina, por su propio namespace
+        if (KITCHEN_RELAYED_EVENTS.has(event)) relayToKitchenDevices(event, payload);
     } catch (error) {
         // El tiempo real es una mejora, no un requisito: si falla, se registra
         // y la operación que lo disparó continúa normalmente.

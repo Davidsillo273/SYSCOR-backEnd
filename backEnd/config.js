@@ -14,7 +14,11 @@ export const config = {
     },
     // Clave secreta con la que firmamos y verificamos las sesiones de los usuarios
     jwt: {
-        secret: process.env.JWT_Secret_key
+        secret: process.env.JWT_Secret_key,
+        // Llave de los tokens de las pantallas de cocina (KDS). Es otra llave a
+        // propósito: un token de dispositivo nunca valida como sesión de
+        // usuario. Si falta, se deriva de la de sesiones (ver deviceTokenUtils).
+        deviceSecret: process.env.JWT_DEVICE_SECRET_KEY
     },
     // Clave para cifrar el número de las tarjetas que guardan los clientes
     // (ver cardCryptoUtils). Si falta se usa la de JWT, solo para desarrollo
@@ -67,5 +71,17 @@ export const config = {
         // es el alias que Google mantiene apuntando siempre al modelo
         // flash-lite vigente, así no se vuelve a romper cuando cambien de versión
         model: process.env.GEMINI_MODEL || "gemini-flash-lite-latest"
+    },
+    // Proveedores de respaldo de la IA (ver src/utils/ai/llmOrchestrator.js):
+    // si Gemini se queda sin cuota (429), tarda o falla, se intenta Groq y
+    // luego OpenRouter. Sin clave, ese proveedor simplemente se salta.
+    groq: {
+        apiKey: process.env.GROQ_API_KEY,
+        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b"
+    },
+    openrouter: {
+        apiKey: process.env.OPENROUTER_API_KEY,
+        // Modelo gratuito (sufijo ":free") con soporte de herramientas
+        model: process.env.OPENROUTER_MODEL || "qwen/qwen3.8-27b:free"
     }
 }

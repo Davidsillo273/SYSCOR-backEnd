@@ -5,6 +5,7 @@ import "./database.js";
 import { initSocket } from "./src/config/socket.js";
 import { syncReservations } from "./src/utils/tables/reservationUtils.js";
 import { releaseExpiredHolds } from "./src/utils/orders/orderHoldUtils.js";
+import { requestKitchenSync } from "./src/utils/orders/kitchenQueueUtils.js";
 import { migrateRetiredEmployeeTypes } from "./src/utils/users/employeeTypeMigration.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
@@ -36,6 +37,10 @@ async function main() {
     setInterval(syncReservations, 60 * 1000);
     // Pedidos "En espera" cuyo tiempo terminó: vuelven solos a la cola.
     setInterval(() => releaseExpiredHolds().catch((error) => console.error("releaseExpiredHolds:", error)), 30 * 1000);
+    // Sistema de Cocina: los cambios de pedidos ya revisan la cola solos, pero
+    // un pedido programado que llega a su hora no cambia nada en la base.
+    // Esta revisión periódica lo mete a cocina si está libre.
+    setInterval(requestKitchenSync, 30 * 1000);
     // Mostramos un mensaje en la consola para confirmar que el servidor está funcionando
     console.log(`Server on port ${PORT}`);
 }

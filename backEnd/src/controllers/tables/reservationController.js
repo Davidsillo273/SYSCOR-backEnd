@@ -216,11 +216,11 @@ reservationController.checkIn = async (req, res) => {
         const reservations = await Reservation.find({ customer: req.user.id, status: "reserved" })
             .populate("table")
             .sort({ reservedFor: 1 });
-        // La que toca ahora (se puede llegar hasta 1 hora antes).
-        const current = reservations.find(
+        // Las que tocan ahora (se puede llegar hasta 1 hora antes).
+        const inWindow = reservations.filter(
             (r) => r.reservedFor.getTime() - CHECK_IN_BEFORE_MS <= now && r.expiresAt.getTime() >= now,
         );
-        if (!current) {
+        if (inWindow.length === 0) {
             const next = reservations[0];
             return res.status(400).json({
                 title: next ? "Todavía no es tu hora" : "Sin reserva activa",
@@ -229,10 +229,19 @@ reservationController.checkIn = async (req, res) => {
                     : "No tienes una mesa reservada para esta hora.",
             });
         }
-        if (String(current.table?._id) !== String(table._id)) {
+        // La reserva es la de ESTA mesa. Antes se tomaba la primera de la
+        // ventana sin mirar la mesa: con dos reservas a horas cercanas, el
+        // QR de la mesa de una podía registrar la llegada de la otra. Una
+        // mesa que no es de ninguna de sus reservas nunca se ocupa: espera a
+        // quien la reservó.
+        const current = inWindow.find((r) => String(r.table?._id) === String(table._id));
+        if (!current) {
+            const yours = [...new Set(inWindow.map((r) => r.table?.number).filter(Boolean))];
             return res.status(400).json({
                 title: "Esa no es tu mesa",
-                message: `Tu mesa es la ${current.table?.number}. Busca su código QR.`,
+                message: yours.length
+                    ? `Tu mesa es la ${yours.join(" o la ")}. Busca su código QR; esta mesa está guardada para alguien más.`
+                    : "Tu reserva todavía no tiene mesa asignada. Avísale a un mesero.",
             });
         }
         if (table.status === "ocupada") {
@@ -264,7 +273,10 @@ reservationController.checkIn = async (req, res) => {
         );
         emitToRoles(notificationUtils.AUDIENCE_BY_CATEGORY.tables, SOCKET_EVENTS.TABLE_UPDATED, { table: occupied.toObject() });
 
-        const order = await Order.findByIdAndUpdate(current.order, { $set: { table: table._id } }, { new: true })
+        // Llegó: el pedido ya se puede cocinar aunque falte para su hora
+        // programada (arrivedAt). Con el sistema de cocina habilitado entra a
+        // la cola en este momento (el hook de orderModel revisa la cola).
+        const order = await Order.findByIdAndUpdate(current.order, { $set: { table: table._id, arrivedAt: new Date() } }, { new: true })
             .populate("table", "number status")
             .populate("customer", "personalInfo");
         if (order) {

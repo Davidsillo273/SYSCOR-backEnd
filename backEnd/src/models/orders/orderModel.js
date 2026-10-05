@@ -1,5 +1,6 @@
 import mongoose, { Schema, model } from "mongoose";
-import { nextOrderCode } from "../../utils/orders/orderCodeUtils.js";
+import { nextOrderCode, nextKitchenNumber } from "../../utils/orders/orderCodeUtils.js";
+import { admitNewOrder, requestKitchenSync } from "../../utils/orders/kitchenQueueUtils.js";
 
 // Un producto dentro de un pedido (combo, extra o bebida), con los datos ya
 // "congelados" al momento de pedirse (nombre/precio) para que si el producto
@@ -48,6 +49,9 @@ const orderSchema = new Schema({
   // día + número del día). Se asigna solo al crear el pedido, ver hook abajo
   // y utils/orders/orderCodeUtils.js.
   code: { type: String, index: true },
+  // Número de cocina del día (1, 2, 3...): apodo corto para el ticket y para
+  // Chef Panchita. No reemplaza al código. Ver orderCodeUtils.nextKitchenNumber.
+  kitchenNumber: { type: Number },
 
   // --- Campos exclusivos de pedidos LOCALES (dine-in) ---
   table: {
@@ -89,6 +93,10 @@ const orderSchema = new Schema({
   // Si se llena, el pedido queda programado para esa fecha/hora en vez de
   // prepararse de inmediato (ver "Pedidos programados" en Orders.jsx).
   scheduledFor: { type: Date, default: null },
+  // El cliente con mesa reservada llegó (escaneó el QR de su mesa). Desde
+  // ese momento el pedido se puede cocinar aunque falte para scheduledFor:
+  // ya está sentado esperándolo (ver reservationController.checkIn).
+  arrivedAt: { type: Date, default: null },
   // Si el pedido lo recibe alguien distinto al cliente (a domicilio o al
   // pasar a recogerlo al local), solo se pide nombre y apellido de esa persona.
   receivedBy: {
@@ -273,6 +281,19 @@ const orderSchema = new Schema({
 // pedido (a domicilio, para llevar o en el local).
 orderSchema.pre("save", async function assignOrderCode() {
   if (this.isNew && !this.code) this.code = await nextOrderCode(this, this.createdAt || new Date());
+  if (this.isNew && !this.kitchenNumber) this.kitchenNumber = await nextKitchenNumber(this.createdAt || new Date());
 });
+
+// Sistema de Cocina (KDS): con el sistema habilitado, un pedido nuevo entra
+// directo a cocina si no hay otro preparándose; si no, queda "pending".
+orderSchema.pre("save", async function admitToKitchen() {
+  if (this.isNew) await admitNewOrder(this);
+});
+
+// Cualquier cambio a un pedido (pasó a Lista, se canceló, el mesero marchó un
+// 2º tiempo, el cliente dejó de agregar productos...) puede liberar la cocina:
+// se revisa la cola una vez, sin importar qué controlador hizo el cambio.
+orderSchema.post("save", () => requestKitchenSync());
+orderSchema.post(["findOneAndUpdate", "updateOne", "updateMany", "findOneAndDelete", "deleteOne"], () => requestKitchenSync());
 
 export default model("Order", orderSchema);

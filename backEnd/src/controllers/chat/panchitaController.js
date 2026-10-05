@@ -410,10 +410,9 @@ panchitaController.chat = async (req, res) => {
 
         let reply = null;
         for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-            // Gemini a veces no responde a tiempo: se reintenta una vez.
-            const content =
-                (await generateWithTools({ contents, tools: declarations, systemPrompt })) ||
-                (await generateWithTools({ contents, tools: declarations, systemPrompt }));
+            // Si Gemini no responde, el orquestador ya intenta Groq y OpenRouter
+            // (ver llmOrchestrator): reintentar aquí solo duplicaría la espera.
+            const content = await generateWithTools({ contents, tools: declarations, systemPrompt });
             if (!content?.parts?.length) break;
             contents.push(content);
 

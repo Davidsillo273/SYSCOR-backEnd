@@ -7,6 +7,12 @@ import swaggerUi from "swagger-ui-express";
 import allRoutes from "./src/routes/allRoutes/index.js";
 // Middleware que identifica al usuario sin bloquear las rutas públicas
 import { attachUser } from "./src/middlewares/auth/authMiddleware.js";
+// Identifica a las pantallas de cocina por su token de dispositivo
+import { attachKitchenDevice } from "./src/middlewares/auth/kitchenDeviceMiddleware.js";
+
+// Definimos la ruta base para nuestra API, por defecto usamos "/api".
+// Va aquí arriba porque el middleware de pantallas de cocina también la usa.
+const api = process.env.API_URL || "/api";
 // Limitador de peticiones global, para mitigar abuso/scraping de la API
 import { globalRateLimiter } from "./src/middlewares/security/rateLimitMiddleware.js";
 // Documento OpenAPI generado a partir de los comentarios @swagger de las rutas
@@ -62,6 +68,11 @@ app.use(express.json());
 // Gracias a esto las notificaciones pueden decir quién realizó cada movimiento.
 app.use(attachUser);
 
+// Pantallas de cocina (KDS): si la petición trae un token de dispositivo, se
+// identifica aquí (y se rechaza con 401 si ya no vale). Esa identidad solo
+// abre las rutas de /kitchen; cualquier otra ruta protegida le responde 403.
+app.use(attachKitchenDevice(`${api}/kitchen`));
+
 // Limitador de peticiones global (por usuario con sesión, por IP sin ella):
 // protege la API completa contra abuso sin afectar el uso normal del panel. Las rutas de
 // login/recuperación tienen además su propio límite, más estricto, definido
@@ -71,9 +82,6 @@ app.use(globalRateLimiter);
 // Documentación interactiva de la API (Swagger UI). Solo lectura: no exige
 // sesión porque describe la API, no la ejecuta.
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// Definimos la ruta base para nuestra API, por defecto usamos "/api"
-const api = process.env.API_URL || "/api";
 
 // --- Rutas ---
 // Le decimos a la aplicación que utilice todas las rutas que importamos bajo la ruta base

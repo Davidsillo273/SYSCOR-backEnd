@@ -33,7 +33,7 @@ const ONE_HOUR_MS = 60 * 60 * 1000;
 // Revisa los pedidos "preparing" y marca como "atrasado" los que llevan mÃ¡s
 // de 1 hora sin pasar a "ready". Se ejecuta cada vez que se listan pedidos,
 // para no depender de un cron/proceso en segundo plano aparte.
-const flagDelayedOrders = async () => {
+export const flagDelayedOrders = async () => {
   const preparingOrders = await Order.find({ status: 'preparing' });
   const cutoff = Date.now() - ONE_HOUR_MS;
 
@@ -373,80 +373,96 @@ orderController.getMyOrders = async (req, res) => {
 };
 
 // Cambiar estado de un pedido. Cuando el nuevo estado es "delivered" (y no
-// lo era ya), se dispara la facturaciÃ³n automÃ¡tica (ver generateInvoice).
-orderController.updateOrderStatus = async (req, res) => {
-  try {
-    const { status } = req.body;
-    const validStatuses = ['pending', 'preparing', 'ready', 'delivered', 'cancelled', 'atrasado'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: "Invalid status" });
-    }
+// lo era ya), se dispara la facturación automática (ver generateInvoice).
+//
+// La lógica vive en applyOrderStatus para que la pantalla de cocina (KDS,
+// controllers/kitchen) aplique EXACTAMENTE las mismas reglas sin copiar
+// nada: lo único que cambia allá es qué estados puede pedir y qué datos de
+// la comanda se le devuelven. Devuelve { code, body, order } en vez de
+// responder, y quien la llama decide qué mandar.
+export const applyOrderStatus = async ({ orderId, status, user }) => {
+  const validStatuses = ['pending', 'preparing', 'ready', 'delivered', 'cancelled', 'atrasado'];
+  if (!validStatuses.includes(status)) {
+    return { code: 400, body: { message: "Invalid status" } };
+  }
 
-    // "Agregar más productos": primero se liberan las pausas vencidas, para que
-    // un pedido cuyo tiempo ya terminó se pueda cocinar de inmediato.
-    if (status === 'preparing') await releaseExpiredHolds();
+  // "Agregar más productos": primero se liberan las pausas vencidas, para que
+  // un pedido cuyo tiempo ya terminó se pueda cocinar de inmediato.
+  if (status === 'preparing') await releaseExpiredHolds();
 
-    const previousOrder = await Order.findById(req.params.id).select("status hold waiting");
-    if (!previousOrder) return res.status(404).json({ message: "Order not found" });
+  const previousOrder = await Order.findById(orderId).select("status hold waiting");
+  if (!previousOrder) return { code: 404, body: { message: "Order not found" } };
 
-    // El cliente está agregando productos: cocina no lo empieza hasta que
-    // pague lo agregado, lo deje o pasen los 10 minutos.
-    const startsKitchen = status === 'preparing' && previousOrder.status === 'pending';
-    // Segundo tiempo en espera: cocina no lo empieza hasta que el mesero lo marche.
-    if (startsKitchen && previousOrder.waiting) {
-      return res.status(409).json({
+  // El cliente está agregando productos: cocina no lo empieza hasta que
+  // pague lo agregado, lo deje o pasen los 10 minutos.
+  const startsKitchen = status === 'preparing' && previousOrder.status === 'pending';
+  // Segundo tiempo en espera: cocina no lo empieza hasta que el mesero lo marche.
+  if (startsKitchen && previousOrder.waiting) {
+    return {
+      code: 409,
+      body: {
         title: "Esperando al mesero",
         message: "Esta comanda es un segundo tiempo: se prepara cuando el mesero la marche.",
-      });
-    }
-    if (startsKitchen && previousOrder.hold?.active) {
-      return res.status(409).json({
+      },
+    };
+  }
+  if (startsKitchen && previousOrder.hold?.active) {
+    return {
+      code: 409,
+      body: {
         title: "Cliente agregando productos",
         message: "El cliente está agregando productos a este pedido. Vuelve a la cola en unos minutos; mientras, sigue con el siguiente.",
-      });
-    }
+      },
+    };
+  }
 
-    const mongoUpdate = { $set: { status } };
-    // Quién la sirvió (puede ser otro mesero distinto del que la tomó).
-    if (status === 'delivered' && previousOrder.status !== 'delivered' && req.user?.role === 'employee') {
-      const employee = await EmployeeModel.findById(req.user.id).select('personalInfo.name personalInfo.lastname').lean();
-      mongoUpdate.$set.servedBy = { id: req.user.id, name: employeeName(employee), at: new Date() };
-    }
-    if (status === 'cancelled') mongoUpdate.$set.waiting = false;
-    // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
-    // reinicia su tiempo en preparaciÃ³n (acciÃ³n "Continuar" de cocina).
-    const restartsPreparation = status === 'preparing' && ['preparing', 'atrasado'].includes(previousOrder.status);
-    if (previousOrder.status !== status || restartsPreparation) {
-      mongoUpdate.$push = { statusHistory: { status, changedAt: new Date() } };
-    }
+  const mongoUpdate = { $set: { status } };
+  // Quién la sirvió (puede ser otro mesero distinto del que la tomó).
+  if (status === 'delivered' && previousOrder.status !== 'delivered' && user?.role === 'employee') {
+    const employee = await EmployeeModel.findById(user.id).select('personalInfo.name personalInfo.lastname').lean();
+    mongoUpdate.$set.servedBy = { id: user.id, name: employeeName(employee), at: new Date() };
+  }
+  if (status === 'cancelled') mongoUpdate.$set.waiting = false;
+  // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
+  // reinicia su tiempo en preparación (acción "Continuar" de cocina).
+  const restartsPreparation = status === 'preparing' && ['preparing', 'atrasado'].includes(previousOrder.status);
+  if (previousOrder.status !== status || restartsPreparation) {
+    mongoUpdate.$push = { statusHistory: { status, changedAt: new Date() } };
+  }
 
-    // Al empezar cocina se revisa otra vez que no esté en espera, en la misma
-    // operación: si el cliente pausa en ese instante, no se cocina.
-    const filter = startsKitchen ? { _id: req.params.id, ...notOnHoldFilter() } : { _id: req.params.id };
-    const order = await Order.findOneAndUpdate(
-      filter,
-      mongoUpdate,
-      { new: true }
-    ).populate('table', 'number status')
-     .populate(WAITER_POPULATE)
-     .populate('customer', 'personalInfo');
-    if (!order) {
-      return res.status(409).json({ title: "Cliente agregando productos", message: "El cliente acaba de empezar a agregar productos a este pedido." });
-    }
+  // Al empezar cocina se revisa otra vez que no esté en espera, en la misma
+  // operación: si el cliente pausa en ese instante, no se cocina.
+  const filter = startsKitchen ? { _id: orderId, ...notOnHoldFilter() } : { _id: orderId };
+  const order = await Order.findOneAndUpdate(
+    filter,
+    mongoUpdate,
+    { new: true }
+  ).populate('table', 'number status')
+   .populate(WAITER_POPULATE)
+   .populate('customer', 'personalInfo');
+  if (!order) {
+    return { code: 409, body: { title: "Cliente agregando productos", message: "El cliente acaba de empezar a agregar productos a este pedido." } };
+  }
 
-    // Facturar solo la primera vez que llega a "delivered" (evita duplicar
-    // la venta si el estado se mueve delivered -> otro -> delivered)
-    if (status === 'delivered' && previousOrder.status !== 'delivered') {
-      await generateInvoice(order);
-    }
+  // Facturar solo la primera vez que llega a "delivered" (evita duplicar
+  // la venta si el estado se mueve delivered -> otro -> delivered)
+  if (status === 'delivered' && previousOrder.status !== 'delivered') {
+    await generateInvoice(order);
+  }
 
-    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+  emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
 
-    // Push al cliente de la app. No se espera: cocina no tiene por qué
-    // aguardar a que salga el aviso.
-    if (previousOrder.status !== status) notifyOrderStatus(order, status);
+  // Push al cliente de la app. No se espera: cocina no tiene por qué
+  // aguardar a que salga el aviso.
+  if (previousOrder.status !== status) notifyOrderStatus(order, status);
 
-    return res.status(200).json({ message: "Order updated", data: order });
+  return { code: 200, body: { message: "Order updated", data: order }, order };
+};
+
+orderController.updateOrderStatus = async (req, res) => {
+  try {
+    const result = await applyOrderStatus({ orderId: req.params.id, status: req.body.status, user: req.user });
+    return res.status(result.code).json(result.body);
   } catch (error) {
     console.error("Error updating order:", error);
     return res.status(500).json({ message: "Internal server error" });

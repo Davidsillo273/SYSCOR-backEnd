@@ -17,7 +17,7 @@ const router = express.Router();
  *       - cookieAuth: []
  *     responses:
  *       200:
- *         description: Documento de configuración (operation.lowStockThresholds, operation.autoRefreshDashboard, operation.dashboardRefreshSeconds, notifications por categoría).
+ *         description: Documento de configuración (operation.lowStockThresholds, operation.autoRefreshDashboard, operation.dashboardRefreshSeconds, notifications por categoría y kitchen con el estado del Sistema de Cocina).
  *       401:
  *         description: No autenticado.
  *       500:
@@ -63,11 +63,17 @@ router.get("/", validateAuthCookie(["admin", "employee"]), settingsController.ge
  *                   tables: { type: boolean, example: true }
  *                   menu: { type: boolean, example: true }
  *                   clients: { type: boolean, example: true }
+ *               kitchen:
+ *                 type: object
+ *                 description: Tiempos de alerta del Sistema de Cocina (KDS); se emiten por socket como kitchen:status_changed. Encenderlo/apagarlo es en /kitchen/devices/pair y /kitchen/disable.
+ *                 properties:
+ *                   warningMinutes: { type: integer, example: 10, minimum: 1, maximum: 180 }
+ *                   maxMinutes: { type: integer, example: 15, minimum: 1, maximum: 180 }
  *     responses:
  *       200:
  *         description: Configuración actualizada correctamente; devuelve el documento actualizado.
  *       400:
- *         description: Umbral de stock bajo o intervalo de actualización del dashboard inválidos.
+ *         description: Umbral de stock bajo, intervalo de actualización del dashboard o tiempos de alerta de cocina inválidos.
  *       401:
  *         description: No autenticado o rol distinto de admin.
  *       500:

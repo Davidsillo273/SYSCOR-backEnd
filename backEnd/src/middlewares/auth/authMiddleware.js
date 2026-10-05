@@ -1,6 +1,7 @@
 import jsonwebtoken from "jsonwebtoken";
 import { config } from "../../../config.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
+import { rejectKitchenDevice } from "./kitchenDeviceMiddleware.js";
 
 // Este middleware NO bloquea a nadie: solo intenta averiguar quién está haciendo la petición.
 // Si viene una cookie válida, deja los datos del usuario en req.user; si no viene o está dañada,
@@ -30,6 +31,12 @@ export const attachUser = (req, res, next) => {
 export const validateAuthCookie = (allowedTypes = []) => {
     return async (req, res, next) => {
         try {
+            // Una pantalla de cocina (token de dispositivo, ver
+            // kitchenDeviceMiddleware) nunca entra a rutas de usuarios: solo a
+            // las de routes/kitchen. Se corta aquí, antes de mirar la cookie,
+            // para que ni una cookie de admin del mismo navegador la deje pasar.
+            if (req.kitchenDevice) return rejectKitchenDevice(res);
+
             // Extraemos la galleta (cookie) llamada 'authCookie' que nos envía el usuario.
             // Aquí es donde está guardado el token que confirma quién inició sesión.
             const { authCookie } = req.cookies;

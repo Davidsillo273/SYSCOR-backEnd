@@ -34,6 +34,12 @@ const swaggerDefinition = {
         name: "authCookie",
         description: "Cookie de sesión (JWT) que se setea al iniciar sesión. Contiene el rol (admin/employee/customer) y, para empleados, sus permisos.",
       },
+      kitchenDeviceAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Token de dispositivo de una pantalla de cocina (rol KITCHEN_DEVICE). Lo entrega el servidor por socket al emparejarla; solo abre las rutas /kitchen de pantalla.",
+      },
     },
     schemas: {
       ErrorResponse: {
