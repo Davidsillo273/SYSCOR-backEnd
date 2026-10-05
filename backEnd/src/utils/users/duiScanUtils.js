@@ -140,6 +140,10 @@ const extractWithGroq = async (images) => {
       // Temperatura baja: acá no se quiere creatividad, se quiere que
       // transcriba lo que ve en el documento.
       temperature: 0.1,
+      // Groq reserva max_tokens contra el límite de tokens de salida por
+      // minuto (1000 en el plan gratis); sin tope, la petición se rechaza
+      // con 429 aunque el JSON del DUI ocupe ~150 tokens.
+      max_tokens: 500,
     }),
     // Leer dos imágenes tarda más que un prompt de texto suelto.
     signal: AbortSignal.timeout(30000),
