@@ -2,14 +2,16 @@ import Order from "../../models/orders/orderModel.js";
 import { BRANCH } from "../../constants/branch.js";
 import cloudinaryUtils from "../../utils/cloudinaryUtils.js";
 import { haversineKm } from "../../utils/panchita/etaUtils.js";
+import google, { hasGoogleKey } from "../../utils/panchita/googleMapsUtils.js";
+import free from "../../utils/panchita/freeMapsUtils.js";
 import { applyOrderStatus } from "./orderController.js";
 import { emitToRoles, emitToTypes, emitToUser, SOCKET_EVENTS } from "../../config/socket.js";
 
 // Reparto interno del restaurante: los repartidores son empleados del local.
-// No hay bolsa de pedidos ni cobros: cuando cocina termina un pedido a
-// domicilio entra a la cola, el repartidor inicia la entrega (queda a su
-// nombre para que nadie más salga con el mismo pedido), sigue la ruta y
-// confirma al entregar.
+// Cuando cocina termina un pedido a domicilio entra a la cola, el repartidor
+// inicia la entrega (queda a su nombre para que nadie más salga con el mismo
+// pedido), sigue la ruta y confirma al entregar. Solo cobra los pedidos de
+// pago al recibir (efectivo o tarjeta en POS); los pagados en línea no.
 const deliveryController = {};
 
 const DELIVERY_POPULATE = [
@@ -26,6 +28,16 @@ const QUEUE_FILTER = {
   status: "ready",
   driver: null,
   deliveryStatus: { $in: [null, "available"] },
+};
+
+const PAY_ON_DELIVERY = ["cash", "card_on_delivery"];
+
+// Lo que el repartidor cobra en la puerta: lo que no cubrió el saldo a favor.
+// Lo agregado después ("Agregar más productos") siempre se paga en línea.
+const amountToCollect = (order) => {
+  if (!PAY_ON_DELIVERY.includes(order.paymentMethod) || order.paymentStatus === "paid") return 0;
+  const charge = order.payment?.amount ?? (order.total || 0) - (order.payment?.creditApplied || 0);
+  return Math.max(Math.round(charge * 100) / 100, 0);
 };
 
 // Factor de calles sobre la línea recta, el mismo que usa etaUtils.
@@ -46,12 +58,27 @@ const fullName = (person) => `${person?.name || ""} ${person?.lastname || ""}`.t
 const lastStatusAt = (order, status) =>
   [...(order.statusHistory || [])].reverse().find((h) => h.status === status)?.changedAt || null;
 
-// Coordenadas del domicilio que ya geocodificó Panchita al estimar la entrega.
-const destinationOf = (order) => {
-  const dest = order.eta?.destination;
-  return Number.isFinite(dest?.latitude) && Number.isFinite(dest?.longitude)
-    ? { latitude: dest.latitude, longitude: dest.longitude }
+const validPoint = (point) =>
+  Number.isFinite(point?.latitude) && Number.isFinite(point?.longitude)
+    ? { latitude: point.latitude, longitude: point.longitude }
     : null;
+
+// Coordenadas guardadas para la entrega, o las que ya geocodificó Panchita.
+const destinationOf = (order) => validPoint(order.deliveryLocation) || validPoint(order.eta?.destination);
+
+// Geocodifica el domicilio una sola vez y lo guarda en el pedido.
+const ensureDestination = async (order) => {
+  if (destinationOf(order) || !order.deliveryAddress) return;
+  try {
+    const point =
+      (hasGoogleKey() ? await google.geocodeAddress(order.deliveryAddress) : null) ||
+      (await free.geocodeAddress(order.deliveryAddress));
+    if (!validPoint(point)) return;
+    await Order.updateOne({ _id: order._id }, { $set: { deliveryLocation: point } });
+    order.deliveryLocation = point;
+  } catch (err) {
+    console.error("delivery.ensureDestination:", err.message);
+  }
 };
 
 // Minutos de camino (tráfico y clima), sin el tiempo de cocina.
@@ -82,6 +109,10 @@ const formatDelivery = (order) => {
     receivedBy: fullName(order.receivedBy) || null,
     items: (order.items || []).map((i) => ({ id: i._id, quantity: i.quantity, name: i.name })),
     note: order.notes || null,
+    total: order.total || 0,
+    paymentMethod: order.paymentMethod,
+    amountToCollect: amountToCollect(order),
+    collectedAmount: order.payment?.collectedAmount || 0,
     pickup: {
       name: BRANCH.name,
       address: BRANCH.address,
@@ -133,6 +164,7 @@ deliveryController.getMine = async (req, res) => {
       .populate(DELIVERY_POPULATE)
       .lean();
 
+    if (active) await ensureDestination(active);
     res.json(active ? formatDelivery(active) : null);
   } catch (err) {
     console.error("delivery.getMine:", err);
@@ -183,6 +215,7 @@ deliveryController.start = async (req, res) => {
     }
 
     const populated = await findPopulated(order._id);
+    await ensureDestination(populated);
 
     emitToRoles(["admin", "employee"], SOCKET_EVENTS.ORDER_UPDATED, { order: populated });
     emitToTypes(["delivery"], "delivery:started", { orderId: order._id });
@@ -198,7 +231,7 @@ deliveryController.start = async (req, res) => {
 // PATCH /orders/delivery/:id/confirm
 // El repartidor confirma que entregó el pedido. El cambio a "delivered" pasa
 // por applyOrderStatus para facturar y avisar al cliente igual que siempre.
-// El cobro no lo maneja el repartidor, así que paymentStatus no se toca.
+// Si era de pago al recibir, el repartidor ya cobró: queda pagado.
 deliveryController.confirm = async (req, res) => {
   try {
     const { deliveryMethod, driverNote } = req.body || {};
@@ -224,6 +257,21 @@ deliveryController.confirm = async (req, res) => {
     if (!order) {
       await cloudinaryUtils.deletePreviousImage(req.file?.path);
       return res.status(404).json({ message: "No encontramos esta entrega en camino." });
+    }
+
+    const collected = amountToCollect(order);
+    if (collected > 0) {
+      await Order.updateOne(
+        { _id: order._id },
+        {
+          $set: {
+            paymentStatus: "paid",
+            "payment.collectedBy": req.user.id,
+            "payment.collectedAmount": collected,
+            "payment.collectedAt": new Date(),
+          },
+        }
+      );
     }
 
     const result = await applyOrderStatus({ orderId: order._id, status: "delivered", user: req.user });

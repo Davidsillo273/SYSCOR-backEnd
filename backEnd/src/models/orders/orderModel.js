@@ -90,6 +90,12 @@ const orderSchema = new Schema({
   reservation: { type: mongoose.Schema.Types.ObjectId, ref: "Reservation", default: null },
   // Dirección de entrega. Solo obligatoria cuando isDelivery es true.
   deliveryAddress: { type: String },
+  // Coordenadas de deliveryAddress para la ruta del repartidor (se geocodifica
+  // al iniciar la entrega si Panchita no la había calculado ya).
+  deliveryLocation: {
+    latitude: { type: Number },
+    longitude: { type: Number },
+  },
   // Si se llena, el pedido queda programado para esa fecha/hora en vez de
   // prepararse de inmediato (ver "Pedidos programados" en Orders.jsx).
   scheduledFor: { type: Date, default: null },
@@ -124,6 +130,10 @@ const orderSchema = new Schema({
     // Parte del pedido pagada con saldo a favor (reclamos resueltos por Panchita)
     creditApplied: { type: Number, default: 0 },
     checkout: { type: mongoose.Schema.Types.ObjectId, ref: "Checkout" },
+    // Pago al recibir: el repartidor que cobró en la puerta, cuánto y cuándo.
+    collectedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Employee", default: null },
+    collectedAmount: { type: Number, default: null },
+    collectedAt: { type: Date, default: null },
   },
 
   // Cobros de productos agregados después ("Agregar más productos").
