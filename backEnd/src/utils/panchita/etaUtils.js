@@ -103,7 +103,7 @@ const isRushHour = (date = new Date()) => {
     return (m >= 11 * 60 + 30 && m <= 13 * 60 + 30) || (m >= 17 * 60 && m <= 19 * 60 + 30);
 };
 
-const haversineKm = (a, b) => {
+export const haversineKm = (a, b) => {
     const rad = (d) => (d * Math.PI) / 180;
     const dLat = rad(b.latitude - a.latitude);
     const dLon = rad(b.longitude - a.longitude);

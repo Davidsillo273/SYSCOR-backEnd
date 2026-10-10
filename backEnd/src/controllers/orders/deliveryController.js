@@ -1,118 +1,142 @@
 import Order from "../../models/orders/orderModel.js";
-import Invoice from "../../models/orders/invoiceModel.js";
+import { BRANCH } from "../../constants/branch.js";
+import cloudinaryUtils from "../../utils/cloudinaryUtils.js";
+import { haversineKm } from "../../utils/panchita/etaUtils.js";
+import { applyOrderStatus } from "./orderController.js";
 import { emitToRoles, emitToTypes, emitToUser, SOCKET_EVENTS } from "../../config/socket.js";
 
+// Reparto interno del restaurante: los repartidores son empleados del local.
+// No hay bolsa de pedidos ni cobros: cuando cocina termina un pedido a
+// domicilio entra a la cola, el repartidor inicia la entrega (queda a su
+// nombre para que nadie más salga con el mismo pedido), sigue la ruta y
+// confirma al entregar.
 const deliveryController = {};
 
-// Proyección compartida: lo que la app del repartidor necesita ver en cada entrega.
 const DELIVERY_POPULATE = [
-  { path: "customer", select: "personalInfo.name personalInfo.lastname personalInfo.phones loginInfo.email" },
+  { path: "customer", select: "personalInfo.name personalInfo.lastname personalInfo.phones" },
   { path: "driver", select: "personalInfo.name personalInfo.lastname" },
 ];
 
-const extractPhone = (customer, order) => {
-  if (order?.contact?.phone) return order.contact.phone;
+const ACTIVE_STATUSES = ["accepted", "on_route"];
+
+// Cola: pedido a domicilio listo en cocina que todavía no sale. Los pedidos
+// que quedaron listos antes de existir deliveryStatus lo traen vacío.
+const QUEUE_FILTER = {
+  isDelivery: true,
+  status: "ready",
+  driver: null,
+  deliveryStatus: { $in: [null, "available"] },
+};
+
+// Factor de calles sobre la línea recta, el mismo que usa etaUtils.
+const STREET_FACTOR = 1.4;
+
+const extractPhone = (customer) => {
   const phones = customer?.personalInfo?.phones;
   if (Array.isArray(phones) && phones.length > 0) {
     const first = phones[0];
     if (typeof first === "string") return first;
     if (first && typeof first === "object") return first.number || first.phone || null;
   }
-  return customer?.personalInfo?.phone || null;
+  return null;
 };
 
-// Formatea un Order de domicilio al shape que espera la app móvil del repartidor.
+const fullName = (person) => `${person?.name || ""} ${person?.lastname || ""}`.trim();
+
+const lastStatusAt = (order, status) =>
+  [...(order.statusHistory || [])].reverse().find((h) => h.status === status)?.changedAt || null;
+
+// Coordenadas del domicilio que ya geocodificó Panchita al estimar la entrega.
+const destinationOf = (order) => {
+  const dest = order.eta?.destination;
+  return Number.isFinite(dest?.latitude) && Number.isFinite(dest?.longitude)
+    ? { latitude: dest.latitude, longitude: dest.longitude }
+    : null;
+};
+
+// Minutos de camino (tráfico y clima), sin el tiempo de cocina.
+const travelMinutesOf = (order) => {
+  const minutes = (order.eta?.factors || [])
+    .filter((f) => f.type !== "kitchen")
+    .reduce((sum, f) => sum + (Number(f.minutes) || 0), 0);
+  return minutes > 0 ? minutes : null;
+};
+
 const formatDelivery = (order) => {
   const customer = order.customer;
-  const customerName = customer?.personalInfo
-    ? `${customer.personalInfo.name || ""} ${customer.personalInfo.lastname || ""}`.trim()
-    : order.contact?.name
-    ? `${order.contact.name} ${order.contact.lastname || ""}`.trim()
-    : "Cliente";
-
-  const total = order.total || 0;
-  // Estimación básica para distancia y tiempo si no vienen precalculados
-  const distanceKm = order.eta?.distanceKm ?? 3.2;
-  const etaMinutes = order.eta?.durationMinutes ?? 14;
+  const destination = destinationOf(order);
+  const origin = { latitude: BRANCH.latitude, longitude: BRANCH.longitude };
+  const distanceKm = destination
+    ? Math.round(haversineKm(origin, destination) * STREET_FACTOR * 10) / 10
+    : null;
+  const lastMessage = order.driverMessages?.[order.driverMessages.length - 1];
 
   return {
     id: order._id,
-    code: `#D-${String(order._id).slice(-3).toUpperCase()}`,
-    status: order.deliveryStatus,
+    code: order.code ? `#${order.code}` : `#D-${String(order._id).slice(-3).toUpperCase()}`,
+    status: order.deliveryStatus || "available",
     customer: {
-      name: customerName,
-      phone: extractPhone(customer, order),
+      name: fullName(customer?.personalInfo) || fullName(order.contact) || "Cliente",
+      phone: extractPhone(customer),
     },
-    items: (order.items || []).map((i) => ({
-      id: i._id,
-      quantity: i.quantity,
-      name: i.name,
-      price: i.price,
-    })),
+    receivedBy: fullName(order.receivedBy) || null,
+    items: (order.items || []).map((i) => ({ id: i._id, quantity: i.quantity, name: i.name })),
     note: order.notes || null,
-    total: total,
-    paymentMethod: order.paymentMethod,
-    cashGiven: order.cashGiven || null,
     pickup: {
-      name: "El Corral · Centro",
-      address: "Av. Cuscatlán #218",
-      detail: "Av. Cuscatlán #218 · mostrador de reparto",
+      name: BRANCH.name,
+      address: BRANCH.address,
+      detail: `${BRANCH.address} · mostrador de reparto`,
+      latitude: BRANCH.latitude,
+      longitude: BRANCH.longitude,
     },
     dropoff: {
       address: order.deliveryAddress || "Sin dirección",
-      detail: order.driverMessages?.[0]?.text || null,
+      detail: lastMessage?.text || null,
+      latitude: destination?.latitude ?? null,
+      longitude: destination?.longitude ?? null,
     },
-    navigation: {
-      primaryInstruction: "Gira a la derecha en 200 m",
-      primaryStreet: "Av. Roosevelt Norte",
-      nextInstruction: "Luego continúa 1.2 km hasta el semáforo",
-    },
-    arrivalClock: "12:42",
-    distanceKm: distanceKm,
-    etaMinutes: etaMinutes,
-    deliveredAt: order.updatedAt
-      ? new Date(order.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : null,
+    distanceKm,
+    etaMinutes: travelMinutesOf(order),
+    deliveryMethod: order.deliveryMethod || null,
+    driverNote: order.driverNote || null,
+    deliveryProof: order.deliveryProof || null,
+    readyAt: lastStatusAt(order, "ready"),
+    startedAt: lastStatusAt(order, "on_route"),
+    deliveredAt: lastStatusAt(order, "delivered") || (order.deliveryStatus === "delivered" ? order.updatedAt : null),
     createdAt: order.createdAt,
   };
 };
 
-// GET /orders/delivery/available
-// Pedidos de domicilio en estado "ready" sin repartidor asignado todavía.
-deliveryController.getAvailable = async (req, res) => {
+const findPopulated = (id) => Order.findById(id).populate(DELIVERY_POPULATE).lean();
+
+// GET /orders/delivery/queue
+// Pedidos a domicilio listos para salir, el que lleva más tiempo esperando primero.
+deliveryController.getQueue = async (req, res) => {
   try {
-    const orders = await Order.find({
-      isDelivery: true,
-      status: "ready",
-      deliveryStatus: "available",
-      driver: null,
-    })
+    const orders = await Order.find(QUEUE_FILTER)
       .populate(DELIVERY_POPULATE)
-      .sort({ createdAt: 1 })
+      .sort({ updatedAt: 1 })
       .lean();
 
     res.json(orders.map(formatDelivery));
   } catch (err) {
-    console.error("delivery.getAvailable:", err);
-    res.status(500).json({ message: "Error al obtener entregas disponibles." });
+    console.error("delivery.getQueue:", err);
+    res.status(500).json({ message: "Error al obtener los pedidos por entregar." });
   }
 };
 
 // GET /orders/delivery/mine
-// La entrega activa (accepted o on_route) del repartidor con sesión.
+// La entrega que el repartidor con sesión lleva en camino.
 deliveryController.getMine = async (req, res) => {
   try {
-    const active = await Order.findOne({
-      driver: req.user.id,
-      deliveryStatus: { $in: ["accepted", "on_route"] },
-    })
+    const active = await Order.findOne({ driver: req.user.id, deliveryStatus: { $in: ACTIVE_STATUSES } })
       .populate(DELIVERY_POPULATE)
       .lean();
 
     res.json(active ? formatDelivery(active) : null);
   } catch (err) {
     console.error("delivery.getMine:", err);
-    res.status(500).json({ message: "Error al obtener tu entrega activa." });
+    res.status(500).json({ message: "Error al obtener tu entrega en curso." });
   }
 };
 
@@ -120,10 +144,7 @@ deliveryController.getMine = async (req, res) => {
 // Últimas 30 entregas completadas por este repartidor.
 deliveryController.getHistory = async (req, res) => {
   try {
-    const orders = await Order.find({
-      driver: req.user.id,
-      deliveryStatus: "delivered",
-    })
+    const orders = await Order.find({ driver: req.user.id, deliveryStatus: "delivered" })
       .sort({ updatedAt: -1 })
       .limit(30)
       .populate(DELIVERY_POPULATE)
@@ -136,134 +157,80 @@ deliveryController.getHistory = async (req, res) => {
   }
 };
 
-// PATCH /orders/delivery/:id/accept
-// El repartidor acepta una entrega del pool.
-deliveryController.accept = async (req, res) => {
+// PATCH /orders/delivery/:id/start
+// El repartidor sale con el pedido: queda a su nombre y deja la cola.
+deliveryController.start = async (req, res) => {
   try {
-    const order = await Order.findOne({
-      _id: req.params.id,
-      isDelivery: true,
-      deliveryStatus: "available",
-      driver: null,
-    });
-
-    if (!order) {
-      return res.status(409).json({
-        message: "Esta entrega ya no está disponible. Otro repartidor pudo haberla tomado.",
-      });
-    }
-
-    // Verificar que el repartidor no tenga ya una activa
-    const hasActive = await Order.exists({
-      driver: req.user.id,
-      deliveryStatus: { $in: ["accepted", "on_route"] },
-    });
-
+    const hasActive = await Order.exists({ driver: req.user.id, deliveryStatus: { $in: ACTIVE_STATUSES } });
     if (hasActive) {
       return res.status(400).json({
-        message: "Ya tienes una entrega en curso. Complétala antes de tomar otra.",
+        message: "Ya tienes una entrega en camino. Termínala antes de salir con otro pedido.",
       });
     }
 
-    order.driver = req.user.id;
-    order.deliveryStatus = "on_route";
-    order.statusHistory.push({ status: "on_route", changedAt: new Date() });
-    await order.save();
+    // Una sola operación: si dos repartidores tocan el mismo pedido, solo uno sale con él.
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, ...QUEUE_FILTER },
+      {
+        $set: { driver: req.user.id, deliveryStatus: "on_route" },
+        $push: { statusHistory: { status: "on_route", changedAt: new Date() } },
+      },
+      { new: true }
+    );
 
-    const populated = await Order.findById(order._id).populate(DELIVERY_POPULATE).lean();
+    if (!order) {
+      return res.status(409).json({ message: "Otro repartidor ya salió con este pedido." });
+    }
+
+    const populated = await findPopulated(order._id);
 
     emitToRoles(["admin", "employee"], SOCKET_EVENTS.ORDER_UPDATED, { order: populated });
-    emitToUser(order.customer, "delivery:accepted", { orderId: order._id });
+    emitToTypes(["delivery"], "delivery:started", { orderId: order._id });
+    if (order.customer) emitToUser(order.customer, "delivery:on_route", { orderId: order._id });
 
     res.json(formatDelivery(populated));
   } catch (err) {
-    console.error("delivery.accept:", err);
-    res.status(500).json({ message: "Error al aceptar la entrega." });
-  }
-};
-
-// PATCH /orders/delivery/:id/reject
-// El repartidor rechaza / devuelve la entrega al pool.
-deliveryController.reject = async (req, res) => {
-  try {
-    const order = await Order.findOne({
-      _id: req.params.id,
-      driver: req.user.id,
-      deliveryStatus: { $in: ["accepted", "on_route"] },
-    });
-
-    if (!order) {
-      return res.status(404).json({ message: "Entrega no encontrada o ya no está en tu poder." });
-    }
-
-    order.driver = null;
-    order.deliveryStatus = "available";
-    await order.save();
-
-    const populated = await Order.findById(order._id).populate(DELIVERY_POPULATE).lean();
-    emitToRoles(["admin", "employee"], SOCKET_EVENTS.ORDER_UPDATED, { order: populated });
-    emitToTypes(["delivery"], "delivery:available", { order: formatDelivery(populated) });
-
-    res.json({ message: "Entrega devuelta al pool." });
-  } catch (err) {
-    console.error("delivery.reject:", err);
-    res.status(500).json({ message: "Error al rechazar la entrega." });
+    console.error("delivery.start:", err);
+    res.status(500).json({ message: "Error al iniciar la entrega." });
   }
 };
 
 // PATCH /orders/delivery/:id/confirm
-// El repartidor confirma que entregó el pedido.
+// El repartidor confirma que entregó el pedido. El cambio a "delivered" pasa
+// por applyOrderStatus para facturar y avisar al cliente igual que siempre.
+// El cobro no lo maneja el repartidor, así que paymentStatus no se toca.
 deliveryController.confirm = async (req, res) => {
   try {
-    const { deliveryMethod, driverNote } = req.body;
-
-    const order = await Order.findOne({
-      _id: req.params.id,
-      driver: req.user.id,
-      deliveryStatus: "on_route",
-    });
-
-    if (!order) {
-      return res.status(404).json({ message: "Entrega activa no encontrada." });
-    }
+    const { deliveryMethod, driverNote } = req.body || {};
 
     if (deliveryMethod && !["hand", "reception"].includes(deliveryMethod)) {
+      await cloudinaryUtils.deletePreviousImage(req.file?.path);
       return res.status(400).json({ message: "deliveryMethod debe ser 'hand' o 'reception'." });
     }
 
-    order.deliveryStatus = "delivered";
-    order.deliveryMethod = deliveryMethod || "hand";
-    order.driverNote = driverNote?.trim() || null;
-    order.status = "delivered";
-    order.paymentStatus = "paid";
-    order.statusHistory.push({ status: "delivered", changedAt: new Date() });
-    await order.save();
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, driver: req.user.id, deliveryStatus: "on_route" },
+      {
+        $set: {
+          deliveryStatus: "delivered",
+          deliveryMethod: deliveryMethod || "hand",
+          driverNote: String(driverNote || "").trim().slice(0, 300) || null,
+          deliveryProof: req.file?.path || null,
+        },
+      },
+      { new: true }
+    );
 
-    const populated = await Order.findById(order._id).populate(DELIVERY_POPULATE).lean();
-
-    // Facturar automáticamente si no existe la factura previa
-    const existingInvoice = await Invoice.findOne({ order: order._id });
-    if (!existingInvoice) {
-      const customer = populated.customer;
-      const customerName = customer?.personalInfo
-        ? `${customer.personalInfo.name || ""} ${customer.personalInfo.lastname || ""}`.trim()
-        : populated.contact?.name
-        ? `${populated.contact.name} ${populated.contact.lastname || ""}`.trim()
-        : undefined;
-
-      await Invoice.create({
-        order: order._id,
-        orderType: order.orderType || "online",
-        items: (order.items || []).map((i) => ({ name: i.name, price: i.price, quantity: i.quantity })),
-        total: order.total,
-        customerName: customerName,
-        isDelivery: true,
-        paymentMethod: order.paymentMethod,
-      });
+    if (!order) {
+      await cloudinaryUtils.deletePreviousImage(req.file?.path);
+      return res.status(404).json({ message: "No encontramos esta entrega en camino." });
     }
 
-    emitToRoles(["admin", "employee"], SOCKET_EVENTS.ORDER_UPDATED, { order: populated });
-    emitToUser(order.customer, "delivery:delivered", { orderId: order._id });
+    const result = await applyOrderStatus({ orderId: order._id, status: "delivered", user: req.user });
+    if (result.code !== 200) return res.status(result.code).json(result.body);
+
+    const populated = await findPopulated(order._id);
+    if (order.customer) emitToUser(order.customer, "delivery:delivered", { orderId: order._id });
 
     res.json({ message: "Entrega confirmada.", order: formatDelivery(populated) });
   } catch (err) {

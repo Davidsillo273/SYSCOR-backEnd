@@ -1,3 +1,4 @@
+import EmployeeModel from "../../models/users/employeeModel.js";
 import { rejectKitchenDevice } from "./kitchenDeviceMiddleware.js";
 
 // Verifica permisos granulares (ej. "menu:create") para rutas que requieren
@@ -32,4 +33,22 @@ export const requirePermission = (permission) => {
   };
 };
 
-export default { requirePermission };
+// Restringe una ruta a empleados de ciertos puestos (ej. "delivery"). El JWT
+// no trae el puesto, así que se consulta en la base de datos. Se usa DESPUÉS
+// de validateAuthCookie(["employee"]).
+export const requireEmployeeType = (types = []) => {
+  return async (req, res, next) => {
+    try {
+      const employee = await EmployeeModel.findById(req.user?.id).select("personalInfo.type").lean();
+      if (!employee || !types.includes(employee.personalInfo?.type)) {
+        return res.status(403).json({ title: "Acceso denegado", message: "Tu puesto no tiene acceso a esta sección." });
+      }
+      return next();
+    } catch (error) {
+      console.error("requireEmployeeType error:", error);
+      return res.status(500).json({ title: "Error del servidor", message: "No se pudo validar tu puesto." });
+    }
+  };
+};
+
+export default { requirePermission, requireEmployeeType };

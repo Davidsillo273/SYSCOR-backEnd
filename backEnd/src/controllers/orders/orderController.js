@@ -14,7 +14,7 @@ import EmployeeModel from "../../models/users/employeeModel.js";
 import { resolvePeriodRange, buildDateMatch } from "../../utils/orders/periodUtils.js";
 // Tiempo real: cocina y el panel de pedidos reflejan cada comanda nueva o
 // cambio de estado al instante, sin recargar ni sondear.
-import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
+import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { notifyOrderStatus } from "../../utils/notifications/pushUtils.js";
 import Claim from "../../models/orders/claimModel.js";
@@ -390,7 +390,7 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
   // un pedido cuyo tiempo ya terminó se pueda cocinar de inmediato.
   if (status === 'preparing') await releaseExpiredHolds();
 
-  const previousOrder = await Order.findById(orderId).select("status hold waiting");
+  const previousOrder = await Order.findById(orderId).select("status hold waiting isDelivery driver deliveryStatus");
   if (!previousOrder) return { code: 404, body: { message: "Order not found" } };
 
   // El cliente está agregando productos: cocina no lo empieza hasta que
@@ -423,6 +423,10 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
     mongoUpdate.$set.servedBy = { id: user.id, name: employeeName(employee), at: new Date() };
   }
   if (status === 'cancelled') mongoUpdate.$set.waiting = false;
+  // Un pedido a domicilio que sale de cocina entra a la cola de reparto.
+  const opensForDrivers = status === 'ready' && previousOrder.isDelivery && !previousOrder.driver
+    && [null, undefined, 'available'].includes(previousOrder.deliveryStatus);
+  if (opensForDrivers) mongoUpdate.$set.deliveryStatus = 'available';
   // Volver a mandar "preparing" sobre una comanda que ya estaba en cocina
   // reinicia su tiempo en preparación (acción "Continuar" de cocina).
   const restartsPreparation = status === 'preparing' && ['preparing', 'atrasado'].includes(previousOrder.status);
@@ -451,6 +455,7 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
   }
 
   emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
+  if (opensForDrivers) emitToTypes(['delivery'], 'delivery:queued', { orderId: order._id });
 
   // Push al cliente de la app. No se espera: cocina no tiene por qué
   // aguardar a que salga el aviso.

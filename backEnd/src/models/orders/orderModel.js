@@ -148,8 +148,8 @@ const orderSchema = new Schema({
   // Estado propio del ciclo de reparto, independiente del status general del
   // pedido. El status del pedido ya llega a "ready" cuando cocina termina;
   // este campo rastrea qué pasa después: quién lo tomó y hasta dónde llegó.
-  //   available  → listo para que un repartidor lo tome (status === 'ready', isDelivery, sin driver)
-  //   accepted   → un repartidor lo aceptó pero aún no salió
+  //   available  → en la cola de reparto: listo en cocina y sin repartidor todavía
+  //   accepted   → (sin uso: el repartidor interno sale directo a on_route)
   //   on_route   → el repartidor salió con el pedido
   //   delivered  → entregado (coincide con status === 'delivered')
   deliveryStatus: {
@@ -165,6 +165,8 @@ const orderSchema = new Schema({
   },
   // Nota opcional que deja el repartidor para la sucursal al confirmar la entrega.
   driverNote: { type: String, maxlength: 300, default: null },
+  // Foto opcional de la entrega (URL de Cloudinary) que toma el repartidor al confirmar.
+  deliveryProof: { type: String, default: null },
 
   // Mensajes del cliente para el repartidor (ej. "Déjalo en la recepción").
   // Los manda desde la app, con un toque o escritos por él.
