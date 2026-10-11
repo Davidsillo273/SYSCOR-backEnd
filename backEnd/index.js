@@ -7,6 +7,7 @@ import { syncReservations } from "./src/utils/tables/reservationUtils.js";
 import { releaseExpiredHolds } from "./src/utils/orders/orderHoldUtils.js";
 import { requestKitchenSync } from "./src/utils/orders/kitchenQueueUtils.js";
 import { migrateRetiredEmployeeTypes } from "./src/utils/users/employeeTypeMigration.js";
+import { dispatchDeliveries } from "./src/utils/panchita/dispatchUtils.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
 // ahí; en local seguimos usando el 4000 de siempre.
@@ -41,6 +42,10 @@ async function main() {
     // un pedido programado que llega a su hora no cambia nada en la base.
     // Esta revisión periódica lo mete a cocina si está libre.
     setInterval(requestKitchenSync, 30 * 1000);
+    // Reparto: Chef Panchita asigna paquetes cada vez que un pedido queda
+    // listo o un repartidor se libera. Esta revisión es el respaldo para lo
+    // que quedó esperando (ej. un domicilio que no se pudo ubicar a la primera).
+    setInterval(() => dispatchDeliveries("periodic"), 30 * 1000);
     // Mostramos un mensaje en la consola para confirmar que el servidor está funcionando
     console.log(`Server on port ${PORT}`);
 }

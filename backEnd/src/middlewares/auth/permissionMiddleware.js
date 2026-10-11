@@ -1,5 +1,6 @@
 import EmployeeModel from "../../models/users/employeeModel.js";
 import { rejectKitchenDevice } from "./kitchenDeviceMiddleware.js";
+import { rejectCashierDevice } from "./cashierDeviceMiddleware.js";
 
 // Verifica permisos granulares (ej. "menu:create") para rutas que requieren
 // algo más específico que solo el rol. Se usa DESPUÉS de validateAuthCookie,
@@ -13,6 +14,7 @@ export const requirePermission = (permission) => {
     // Los permisos de una pantalla de cocina son otros y se revisan en
     // kitchenDeviceMiddleware.requireKitchenDevice: aquí nunca pasan.
     if (req.kitchenDevice) return rejectKitchenDevice(res);
+    if (req.cashierDevice) return rejectCashierDevice(res);
 
     // Si no hay usuario identificado, ni siquiera llegó autenticado hasta aquí
     if (!req.user) {

@@ -21,6 +21,8 @@ import EmployeeModel from "../models/users/employeeModel.js";
 // Pantallas de cocina (KDS): su propio namespace, autenticado por token de
 // dispositivo en vez de cookie (ver kitchenSocket.js).
 import { initKitchenSocket, relayToKitchenDevices } from "./kitchenSocket.js";
+// Lo mismo para las pantallas de caja (POS), namespace "/cashier"
+import { initCashierSocket, requestCashierRefresh } from "./cashierSocket.js";
 
 // Instancia única del servidor de sockets. Se llena en initSocket() y se lee
 // desde getIO(); mientras sea null, los emit son operaciones vacías (útil en
@@ -52,7 +54,27 @@ export const SOCKET_EVENTS = {
     KITCHEN_STATUS_CHANGED: "kitchen:status_changed",
     // Al panel: se emparejó o se desvinculó una pantalla de cocina
     KITCHEN_DEVICES_CHANGED: "kitchen:devices_changed",
+    // Chef Panchita armó (o completó) un paquete de reparto y se lo asignó a
+    // un repartidor. La cocina lo usa para empacar juntas esas órdenes.
+    DELIVERY_PACKAGE_ASSIGNED: "delivery:package_assigned",
+    // Sistema de Caja (POS): el admin lo habilitó/deshabilitó, o se abrió o
+    // cerró un turno. Lo escuchan Ajustes del panel y la app de meseros
+    // (con turno abierto, la cuenta de la mesa se manda a caja).
+    CASHIER_STATUS_CHANGED: "cashier:status_changed",
+    // Se emparejó/desvinculó una caja o cambió algún turno (lo escucha Ajustes)
+    CASHIER_DEVICES_CHANGED: "cashier:devices_changed",
 };
+
+// Eventos que hacen que las cajas vuelvan a consultar lo que hay por cobrar
+const CASHIER_REFRESH_EVENTS = new Set([
+    SOCKET_EVENTS.ORDER_CREATED,
+    SOCKET_EVENTS.ORDER_UPDATED,
+    SOCKET_EVENTS.ORDER_DELETED,
+    SOCKET_EVENTS.TABLE_CREATED,
+    SOCKET_EVENTS.TABLE_UPDATED,
+    SOCKET_EVENTS.TABLE_DELETED,
+    SOCKET_EVENTS.TABLES_BULK_UPDATED,
+]);
 
 // Eventos que, además de a los usuarios, se reenvían a las pantallas de
 // cocina emparejadas (recortados por kitchenSocket.relayToKitchenDevices).
@@ -61,6 +83,7 @@ const KITCHEN_RELAYED_EVENTS = new Set([
     SOCKET_EVENTS.ORDER_UPDATED,
     SOCKET_EVENTS.ORDER_DELETED,
     SOCKET_EVENTS.KITCHEN_STATUS_CHANGED,
+    SOCKET_EVENTS.DELIVERY_PACKAGE_ASSIGNED,
 ]);
 
 /**
@@ -198,6 +221,8 @@ export const initSocket = (httpServer, allowedOrigins = []) => {
     // Namespace "/kitchen" de las pantallas de cocina. El middleware de arriba
     // solo aplica al namespace principal, así que no les exige cookie.
     initKitchenSocket(io);
+    // Namespace "/cashier" de las pantallas de caja (mismo esquema)
+    initCashierSocket(io);
 
     io.on("connection", (socket) => {
         joinRooms(socket);
@@ -239,6 +264,8 @@ export const emitToRoles = (roles, event, payload) => {
 
         // Las comandas también le llegan a la cocina, por su propio namespace
         if (KITCHEN_RELAYED_EVENTS.has(event)) relayToKitchenDevices(event, payload);
+        // Y las cajas solo reciben el aviso de volver a consultar
+        if (CASHIER_REFRESH_EVENTS.has(event)) requestCashierRefresh();
     } catch (error) {
         // El tiempo real es una mejora, no un requisito: si falla, se registra
         // y la operación que lo disparó continúa normalmente.

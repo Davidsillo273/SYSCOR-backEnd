@@ -129,6 +129,11 @@ const employeeSchema = new mongoose.Schema(
       weekendScheduleEnabled: { type: Boolean, default: false },
       weekendScheduleStart: { type: String, default: null },
       weekendScheduleEnd: { type: String, default: null },
+
+      // Repartidores: el interruptor "En turno" de la app. Solo a quien lo
+      // tiene encendido (y no está en ruta) le asigna paquetes Chef Panchita.
+      deliveryOnShift: { type: Boolean, default: false },
+      deliveryOnShiftAt: { type: Date, default: null },
     },
     // Permisos granulares específicos de este empleado (ej. "menu:create").
     // El admin los asigna al invitar o al editar el perfil del empleado.

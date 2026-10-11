@@ -19,6 +19,8 @@ import { BRANCH } from "../../constants/branch.js";
 export const ORDER_CODE_PREFIXES = { delivery: "AD", dine_in: "CL", pickup: "PL" };
 
 export const orderCodePrefix = (order) => {
+    // Venta de mostrador para llevar: es "para llevar" aunque la haga la caja
+    if (order.channel === "counter" && order.fulfillment === "pickup") return ORDER_CODE_PREFIXES.pickup;
     if (order.orderType === "local" || order.fulfillment === "dine_in") return ORDER_CODE_PREFIXES.dine_in;
     if (order.fulfillment === "delivery" || (!order.fulfillment && order.isDelivery)) return ORDER_CODE_PREFIXES.delivery;
     return ORDER_CODE_PREFIXES.pickup;

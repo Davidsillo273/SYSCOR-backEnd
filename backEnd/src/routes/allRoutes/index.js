@@ -21,6 +21,7 @@ import reservationRoutes from "../tables/reservationRoutes.js";
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
 import settingsRoutes from "../settings/settingsRoutes.js";
 import kitchenRoutes from "../kitchen/kitchenRoutes.js";
+import cashierRoutes from "../cashier/cashierRoutes.js";
 import aiRoutes from "../ai/aiRoutes.js";
 import assistantChatRoutes from "../chat/assistantChatRoutes.js";
 import loginHelpRoutes from "../chat/loginHelpRoutes.js";
@@ -103,6 +104,7 @@ router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
 // Sistema de Cocina: emparejamiento (admin) y API de las pantallas de cocina
 router.use("/kitchen", kitchenRoutes);
+router.use("/cashier", cashierRoutes);
 router.use("/ai", aiRoutes);
 router.use("/chat", assistantChatRoutes);
 // Ayuda del login: pública, porque quien pregunta aún no tiene sesión.

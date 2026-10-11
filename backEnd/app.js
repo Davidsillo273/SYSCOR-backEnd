@@ -9,6 +9,7 @@ import allRoutes from "./src/routes/allRoutes/index.js";
 import { attachUser } from "./src/middlewares/auth/authMiddleware.js";
 // Identifica a las pantallas de cocina por su token de dispositivo
 import { attachKitchenDevice } from "./src/middlewares/auth/kitchenDeviceMiddleware.js";
+import { attachCashierDevice } from "./src/middlewares/auth/cashierDeviceMiddleware.js";
 
 // Definimos la ruta base para nuestra API, por defecto usamos "/api".
 // Va aquí arriba porque el middleware de pantallas de cocina también la usa.
@@ -39,6 +40,8 @@ app.set("trust proxy", 1);
 export const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
+    // Sistema de caja (SYSCOR-cashierSystem)
+    "http://localhost:5175",
     ...(process.env.FRONTEND_URL?.split(",").map((url) => url.trim()) || []),
 ];
 
@@ -74,6 +77,9 @@ app.use(attachUser);
 // La ruta base se normaliza ("api", "/api/", "//api" -> "/api"): si el
 // prefijo no coincide exacto, toda petición de la pantalla recibiría 403.
 app.use(attachKitchenDevice(`/${api.replace(/^\/+|\/+$/g, "")}/kitchen`.replace(/\/+/g, "/")));
+
+// Pantallas de caja (POS): mismo esquema, solo abren las rutas de /cashier.
+app.use(attachCashierDevice(`/${api.replace(/^\/+|\/+$/g, "")}/cashier`.replace(/\/+/g, "/")));
 
 // Limitador de peticiones global (por usuario con sesión, por IP sin ella):
 // protege la API completa contra abuso sin afectar el uso normal del panel. Las rutas de

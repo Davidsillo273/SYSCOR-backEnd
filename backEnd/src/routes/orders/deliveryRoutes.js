@@ -9,16 +9,26 @@ const router = Router();
 // Solo empleados con puesto "delivery" (repartidores del restaurante).
 router.use(validateAuthCookie(["employee"]), requireEmployeeType(["delivery"]));
 
-// Pedidos a domicilio listos en cocina que esperan salir
+// Pedidos a domicilio listos en cocina que todavía esperan repartidor
 router.get("/queue", deliveryController.getQueue);
 
-// Entrega en camino del repartidor con sesión
+// Paquete que Chef Panchita le asignó al repartidor, con sus paradas en orden
+router.get("/package", deliveryController.getPackage);
+
+// Salir del local con el paquete asignado (va ANTES de "/:id/start")
+router.patch("/package/start", deliveryController.startPackage);
+
+// Interruptor "En turno": solo a quien está en turno le asigna paquetes Panchita
+router.get("/availability", deliveryController.getAvailability);
+router.patch("/availability", deliveryController.setAvailability);
+
+// Parada que el repartidor tiene que entregar ahora
 router.get("/mine", deliveryController.getMine);
 
 // Historial de entregas completadas del repartidor con sesión
 router.get("/history", deliveryController.getHistory);
 
-// Salir con un pedido de la cola
+// Respaldo manual: tomar un pedido de la cola sin paquete asignado
 router.patch("/:id/start", deliveryController.start);
 
 // Confirmar que la entrega fue completada (foto opcional en el campo "proof")

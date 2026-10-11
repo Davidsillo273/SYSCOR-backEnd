@@ -66,6 +66,14 @@ const orderSchema = new Schema({
   localCustomerName: { type: String },
   // Especificaciones generales para cocina que anota el mesero en la comanda
   notes: { type: String, maxlength: 300 },
+  // Por dónde entró el pedido cuando no es la app ni un mesero: "counter" =
+  // venta de mostrador hecha en la caja (sin mesa, ya pagada al pedir).
+  channel: { type: String, enum: ['counter'], default: undefined },
+  // Cajero que hizo la venta de mostrador
+  soldBy: {
+    id: { type: mongoose.Schema.Types.ObjectId, ref: "Employee" },
+    name: { type: String },
+  },
 
   // --- Campos exclusivos de pedidos EN LÍNEA ---
   customer: {
@@ -159,7 +167,8 @@ const orderSchema = new Schema({
   // pedido. El status del pedido ya llega a "ready" cuando cocina termina;
   // este campo rastrea qué pasa después: quién lo tomó y hasta dónde llegó.
   //   available  → en la cola de reparto: listo en cocina y sin repartidor todavía
-  //   accepted   → (sin uso: el repartidor interno sale directo a on_route)
+  //   accepted   → Panchita lo asignó a un repartidor (en un paquete) y
+  //                todavía no sale del local
   //   on_route   → el repartidor salió con el pedido
   //   delivered  → entregado (coincide con status === 'delivered')
   deliveryStatus: {
@@ -167,6 +176,10 @@ const orderSchema = new Schema({
     enum: ["available", "accepted", "on_route", "delivered"],
     default: null,
   },
+  // Paquete de reparto al que Chef Panchita sumó este pedido (ver
+  // deliveryBatchModel). "accepted" en deliveryStatus = ya está en un paquete
+  // asignado, esperando a que el repartidor salga del local.
+  deliveryBatch: { type: mongoose.Schema.Types.ObjectId, ref: "DeliveryBatch", default: null },
   // Cómo fue entregado al cliente: 'hand' (en mano) o 'reception' (dejado en recepción).
   deliveryMethod: {
     type: String,

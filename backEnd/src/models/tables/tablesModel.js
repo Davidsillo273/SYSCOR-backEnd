@@ -49,7 +49,10 @@ const tableSchema = new Schema({
   },
   qrToken: { type: String, unique: true, sparse: true, default: newQrToken },
   // Reserva de la app que tiene apartada la mesa mientras está 'reservada'.
-  reservation: { type: Schema.Types.ObjectId, ref: 'Reservation', default: null }
+  reservation: { type: Schema.Types.ObjectId, ref: 'Reservation', default: null },
+  // El mesero mandó la cuenta a caja ("Enviar a caja"): la caja la resalta.
+  billRequestedAt: { type: Date, default: null },
+  billRequestedBy: { type: String, default: null }
 }, {
   // Registra fecha de creación y última actualización
   timestamps: true,

@@ -28,9 +28,9 @@ const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 /**
  * Calcula AFP, ISSS, ISR (renta) y el salario neto de un empleado.
  *
- * SOLO sobre el salario base. Los bonos ("additionalPay") viven aparte, en
- * la Planilla de bonos, y a propósito NO entran en esta cuenta: son un pago
- * discrecional del dueño (una gratificación puntual, no una comisión ni una
+ * SOLO sobre el salario base. Los bonos ("additionalPay") se suman después,
+ * íntegros, en la planilla (payrollController), y a propósito NO entran en
+ * esta cuenta: son un pago discrecional del dueño (una gratificación puntual, no una comisión ni una
  * bonificación pactada como parte del contrato), así que no forman parte del
  * salario cotizable ni del ingreso gravado del mes. Si en algún momento un
  * "bono" dejara de ser discrecional y pasara a ser regular/garantizado, la

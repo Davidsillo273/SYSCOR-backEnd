@@ -3,7 +3,8 @@
 // El cálculo de los descuentos de ley NO vive aquí: es payrollUtils quien lo
 // hace, y es la única fuente de verdad del sistema (la usa también el alta de
 // empleados para guardar AFP/ISSS/renta en su ficha). Este controlador solo
-// decide QUIÉN entra en la planilla del período y suma los totales.
+// decide QUIÉN entra en la planilla del período, le suma el bono vigente y
+// calcula los totales.
 import EmployeeModel from "../../models/users/employeeModel.js";
 import { calculatePayrollDeductions } from "../../utils/users/payrollUtils.js";
 
@@ -45,8 +46,66 @@ const resolvePeriod = (periodParam) => {
 };
 
 /**
+ * Bono que le corresponde al empleado en el período.
+ *
+ * El bono ("additionalPay") se pacta por un plazo (15 días, 1, 2 o 3 meses)
+ * que termina en additionalPayEndsAt. Entra en la planilla de cada período en
+ * el que estuvo vigente: si ya había vencido antes de que empezara el mes, no
+ * se paga. Los bonos viejos sin fecha de fin se toman como vigentes.
+ */
+const resolveBonus = (work, start) => {
+    const amount = round2(Number(work.additionalPay) || 0);
+    if (amount <= 0) return { bonus: 0, bonusEndsAt: null };
+
+    const endsAt = work.additionalPayEndsAt ? new Date(work.additionalPayEndsAt) : null;
+    if (endsAt && endsAt < start) return { bonus: 0, bonusEndsAt: endsAt };
+
+    return { bonus: amount, bonusEndsAt: endsAt };
+};
+
+/**
+ * Fila de planilla de UN empleado: salario y sus descuentos de ley, el bono
+ * del período y el total que se le paga.
+ *
+ * Los descuentos de ley (AFP, ISSS, ISR) se calculan SOLO sobre el salario
+ * base. El bono se suma después, íntegro: es un pago discrecional del dueño,
+ * no salario cotizable (ver el comentario en
+ * payrollUtils.calculatePayrollDeductions).
+ */
+const buildPayrollRow = (employee, start) => {
+    const work = employee.workInfo || {};
+    const deductions = calculatePayrollDeductions(Number(work.salary) || 0);
+    const { bonus, bonusEndsAt } = resolveBonus(work, start);
+
+    return {
+        employeeId: employee._id,
+        name: `${employee.personalInfo?.name || ""} ${employee.personalInfo?.lastname || ""}`.trim() || "Sin nombre",
+        image: employee.personalInfo?.image || null,
+        type: employee.personalInfo?.type || "other",
+        typeLabel: EMPLOYEE_TYPE_LABELS[employee.personalInfo?.type] || "Otro",
+        status: work.status || "active",
+        grossSalary: deductions.grossSalary,
+        bonus,
+        bonusEndsAt,
+        // Todo lo devengado en el período: salario + bono.
+        totalEarnings: round2(deductions.grossSalary + bonus),
+        afp: deductions.afp,
+        isss: deductions.isss,
+        isr: deductions.isr,
+        // Base sobre la que se calculó el ISR, útil para la boleta
+        // individual (explica de dónde sale la retención).
+        taxableBase: deductions.taxableBase,
+        totalDeductions: round2(deductions.afp + deductions.isss + deductions.isr),
+        // Salario menos descuentos de ley, sin el bono.
+        netSalary: deductions.netSalary,
+        // Lo que de verdad se le desembolsa: salario neto + bono.
+        netPay: round2(deductions.netSalary + bonus),
+    };
+};
+
+/**
  * Devuelve la planilla del período: una fila por empleado con su salario
- * bruto, sus descuentos de ley y lo que se le debe pagar.
+ * bruto, sus descuentos de ley, su bono y el total a pagar.
  *
  * Query params:
  *   - period: "AAAA-MM" (por defecto, el mes en curso)
@@ -76,49 +135,25 @@ payrollController.getPayroll = async (req, res) => {
             .select("personalInfo workInfo createdAt")
             .sort({ "personalInfo.name": 1 });
 
-        const rows = employees.map((employee) => {
-            const work = employee.workInfo || {};
-            const salary = Number(work.salary) || 0;
-
-            // Los descuentos de ley se calculan SOLO sobre el salario base.
-            // El bono ("additionalPay") ya no entra aquí: es un pago
-            // discrecional que vive aparte, en la Planilla de bonos (ver
-            // getBonusPayroll más abajo), justo para no arrastrar renta u
-            // otros descuentos a un empleado solo por una gratificación
-            // puntual del dueño.
-            const deductions = calculatePayrollDeductions(salary);
-
-            return {
-                employeeId: employee._id,
-                name: `${employee.personalInfo?.name || ""} ${employee.personalInfo?.lastname || ""}`.trim() || "Sin nombre",
-                image: employee.personalInfo?.image || null,
-                type: employee.personalInfo?.type || "other",
-                typeLabel: EMPLOYEE_TYPE_LABELS[employee.personalInfo?.type] || "Otro",
-                status: work.status || "active",
-                grossSalary: deductions.grossSalary,
-                afp: deductions.afp,
-                isss: deductions.isss,
-                isr: deductions.isr,
-                // Base sobre la que se calculó el ISR, útil para la boleta
-                // individual (explica de dónde sale la retención).
-                taxableBase: deductions.taxableBase,
-                totalDeductions: round2(deductions.afp + deductions.isss + deductions.isr),
-                netSalary: deductions.netSalary,
-            };
-        });
+        const rows = employees.map((employee) => buildPayrollRow(employee, start));
 
         // Totales del período, para el encabezado de la pantalla y el PDF.
         const totals = rows.reduce(
             (acc, row) => ({
                 grossSalary: round2(acc.grossSalary + row.grossSalary),
+                bonus: round2(acc.bonus + row.bonus),
+                totalEarnings: round2(acc.totalEarnings + row.totalEarnings),
                 afp: round2(acc.afp + row.afp),
                 isss: round2(acc.isss + row.isss),
                 isr: round2(acc.isr + row.isr),
                 totalDeductions: round2(acc.totalDeductions + row.totalDeductions),
                 netSalary: round2(acc.netSalary + row.netSalary),
+                netPay: round2(acc.netPay + row.netPay),
             }),
-            { grossSalary: 0, afp: 0, isss: 0, isr: 0, totalDeductions: 0, netSalary: 0 }
+            { grossSalary: 0, bonus: 0, totalEarnings: 0, afp: 0, isss: 0, isr: 0, totalDeductions: 0, netSalary: 0, netPay: 0 }
         );
+        // Solo cuentan quienes de verdad tienen bono vigente este período.
+        totals.employeesWithBonus = rows.filter((r) => r.bonus > 0).length;
 
         return res.status(200).json({
             period,
@@ -137,10 +172,10 @@ payrollController.getPayroll = async (req, res) => {
 /**
  * Boleta de pago (nómina) de UN empleado para un período.
  *
- * Es el mismo cálculo que la planilla completa, pero devuelto con el detalle
- * que necesita una constancia individual: datos de identificación del
- * empleado, desglose de lo devengado contra lo deducido, y el neto. Se usa
- * para entregarle al empleado su comprobante de pago.
+ * Es la misma fila de la planilla (buildPayrollRow), pero devuelta con el
+ * detalle que necesita una constancia individual: datos de identificación
+ * del empleado, desglose de lo devengado contra lo deducido, y el total a
+ * pagar. Se usa para entregarle al empleado su comprobante de pago.
  */
 payrollController.getEmployeePayslip = async (req, res) => {
     try {
@@ -154,14 +189,7 @@ payrollController.getEmployeePayslip = async (req, res) => {
         }
 
         const work = employee.workInfo || {};
-        const salary = Number(work.salary) || 0;
-
-        // Esta boleta es la de la Planilla GENERAL: solo salario y sus
-        // descuentos de ley. El bono ya no aparece aquí en absoluto — tiene
-        // su propia boleta en getEmployeeBonusPayslip, sin AFP/ISSS/ISR.
-        const deductions = calculatePayrollDeductions(salary);
-
-        const totalDeductions = round2(deductions.afp + deductions.isss + deductions.isr);
+        const row = buildPayrollRow(employee, start);
 
         return res.status(200).json({
             period,
@@ -169,14 +197,14 @@ payrollController.getEmployeePayslip = async (req, res) => {
             periodEnd: end,
             employee: {
                 id: employee._id,
-                name: `${employee.personalInfo?.name || ""} ${employee.personalInfo?.lastname || ""}`.trim() || "Sin nombre",
-                image: employee.personalInfo?.image || null,
-                type: employee.personalInfo?.type || "other",
-                typeLabel: EMPLOYEE_TYPE_LABELS[employee.personalInfo?.type] || "Otro",
+                name: row.name,
+                image: row.image,
+                type: row.type,
+                typeLabel: row.typeLabel,
                 duiNit: employee.personalInfo?.duiNit || null,
                 phone: employee.personalInfo?.phone || null,
                 email: employee.loginInfo?.email || null,
-                status: work.status || "active",
+                status: row.status,
                 // El horario se incluye porque una constancia de trabajo suele
                 // necesitarlo (ej. para un trámite bancario).
                 schedule: work.scheduleStart && work.scheduleEnd
@@ -185,83 +213,28 @@ payrollController.getEmployeePayslip = async (req, res) => {
                 workDays: work.workDays || [],
                 hiredAt: employee.createdAt || null,
             },
-            // Lo que se le reconoce. Solo salario: el bono se paga y se
-            // documenta aparte, en la Planilla de bonos.
+            // Lo que se le reconoce en el período: salario y bono vigente.
             earnings: {
-                salary: deductions.grossSalary,
-                total: deductions.grossSalary,
+                salary: row.grossSalary,
+                bonus: row.bonus,
+                bonusEndsAt: row.bonusEndsAt,
+                total: row.totalEarnings,
             },
-            // Lo que se le descuenta, con la base que originó la retención.
+            // Lo que se le descuenta (solo sobre el salario), con la base que
+            // originó la retención.
             deductions: {
-                afp: deductions.afp,
-                isss: deductions.isss,
-                isr: deductions.isr,
-                taxableBase: deductions.taxableBase,
-                total: totalDeductions,
+                afp: row.afp,
+                isss: row.isss,
+                isr: row.isr,
+                taxableBase: row.taxableBase,
+                total: row.totalDeductions,
             },
-            netSalary: deductions.netSalary,
+            netSalary: row.netSalary,
+            netPay: row.netPay,
         });
     } catch (error) {
         console.error("payrollController.getEmployeePayslip:", error);
         return res.status(500).json({ title: "Error del servidor", message: "No se pudo generar la boleta de pago." });
-    }
-};
-
-/**
- * Planilla de BONOS del período: nombre completo, puesto, y el bono
- * asignado. A propósito NO lleva AFP/ISSS/ISR — el bono es un pago
- * discrecional del dueño (una gratificación puntual, no una comisión ni una
- * bonificación pactada como parte regular del contrato), así que queda fuera
- * del salario cotizable (ver el comentario en payrollUtils.calculatePayrollDeductions).
- *
- * Mismos query params que getPayroll (period, status), para que ambas
- * planillas del mismo período usen exactamente el mismo filtro de empleados.
- */
-payrollController.getBonusPayroll = async (req, res) => {
-    try {
-        const { period, start, end } = resolvePeriod(req.query.period);
-        const statusFilter = req.query.status || "active";
-
-        const filter = {};
-        if (statusFilter !== "all") {
-            filter["workInfo.status"] = statusFilter;
-        }
-        filter.$or = [
-            { createdAt: { $lte: end } },
-            { createdAt: { $exists: false } },
-        ];
-
-        const employees = await EmployeeModel.find(filter)
-            .select("personalInfo workInfo createdAt")
-            .sort({ "personalInfo.name": 1 });
-
-        const rows = employees.map((employee) => ({
-            employeeId: employee._id,
-            name: `${employee.personalInfo?.name || ""} ${employee.personalInfo?.lastname || ""}`.trim() || "Sin nombre",
-            image: employee.personalInfo?.image || null,
-            type: employee.personalInfo?.type || "other",
-            typeLabel: EMPLOYEE_TYPE_LABELS[employee.personalInfo?.type] || "Otro",
-            status: employee.workInfo?.status || "active",
-            bonus: round2(Number(employee.workInfo?.additionalPay) || 0),
-        }));
-
-        const totals = {
-            employeeCount: rows.length,
-            // Solo cuentan quienes de verdad tienen bono asignado este período.
-            employeesWithBonus: rows.filter((r) => r.bonus > 0).length,
-            totalBonus: round2(rows.reduce((acc, r) => acc + r.bonus, 0)),
-        };
-
-        return res.status(200).json({
-            period,
-            periodStart: start,
-            periodEnd: end,
-            rows,
-            totals,
-        });
-    } catch (error) {
-        console.error("payrollController.getBonusPayroll:", error);
-        return res.status(500).json({ title: "Error del servidor", message: "No se pudo calcular la planilla de bonos." });
     }
 };
 

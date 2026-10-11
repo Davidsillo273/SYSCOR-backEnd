@@ -419,10 +419,36 @@ router.get('/waiter/dashboard', validateAuthCookie(["employee"]), orderControlle
  *         description: Método de pago inválido, mesa no ocupada o sin consumos pendientes.
  *       404:
  *         description: Mesa no encontrada.
+ *       409:
+ *         description: La caja tiene un turno abierto (code CASHIER_OPEN); la cuenta se cobra en caja.
  *       500:
  *         description: Error interno del servidor.
  */
 router.post('/table/:tableId/checkout', validateAuthCookie(["employee", "admin"]), orderController.checkoutTable);
+
+/**
+ * @swagger
+ * /orders/table/{tableId}/request-bill:
+ *   post:
+ *     summary: Enviar la cuenta de una mesa a caja
+ *     description: Con la caja abierta el mesero no cobra; marca la cuenta como solicitada y la caja la resalta para cobrarla.
+ *     tags: [Pedidos]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: tableId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Cuenta enviada a caja.
+ *       400:
+ *         description: Mesa no ocupada o sin consumos pendientes.
+ *       404:
+ *         description: Mesa no encontrada.
+ */
+router.post('/table/:tableId/request-bill', validateAuthCookie(["employee", "admin"]), orderController.requestTableBill);
 
 /**
  * @swagger

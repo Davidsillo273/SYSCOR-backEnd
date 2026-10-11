@@ -45,6 +45,15 @@ const settingsSchema = new Schema({
         // Último cambio del interruptor, para que el panel diga quién y cuándo
         changedAt: { type: Date, default: null },
         changedBy: { type: String, default: null }
+    },
+    // Sistema de Caja (POS, proyecto SYSCOR-cashierSystem del frontend).
+    // Apagado, ninguna pantalla de caja tiene acceso y los meseros cobran las
+    // mesas desde su app como siempre. Encendido, cada caja cobra solo
+    // mientras tenga un turno abierto por un administrador.
+    cashier: {
+        enabled: { type: Boolean, default: false },
+        changedAt: { type: Date, default: null },
+        changedBy: { type: String, default: null }
     }
 }, {
     timestamps: true,

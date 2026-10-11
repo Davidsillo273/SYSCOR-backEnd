@@ -14,9 +14,9 @@ const router = express.Router();
  *   get:
  *     summary: Calcula la planilla de un período
  *     description: >
- *       Devuelve una fila por empleado con su salario base, los descuentos de
- *       ley (AFP, ISSS, ISR) calculados con payrollUtils y el salario neto a
- *       pagar, más los totales del período. Requiere el permiso "payroll".
+ *       Devuelve una fila por empleado con su salario base, su bono vigente,
+ *       los descuentos de ley (AFP, ISSS, ISR, solo sobre el salario) y el
+ *       total a pagar, más los totales del período. Requiere el permiso "payroll".
  *     tags: [Usuarios - Planilla]
  *     security:
  *       - cookieAuth: []
@@ -45,55 +45,15 @@ router.route("/").get(
     payrollController.getPayroll
 );
 
-// Va ANTES de "/employee/:id" para que Express no confunda "bonuses" con un
-// id de empleado.
-/**
- * @swagger
- * /users/payroll/bonuses:
- *   get:
- *     summary: Calcula la planilla de bonos de un período
- *     description: >
- *       Devuelve una fila por empleado con su nombre, puesto y el bono
- *       asignado ese período. A propósito NO lleva AFP/ISSS/ISR: el bono es
- *       un pago discrecional del dueño, no salario cotizable. Requiere el
- *       permiso "payroll".
- *     tags: [Usuarios - Planilla]
- *     security:
- *       - cookieAuth: []
- *     parameters:
- *       - in: query
- *         name: period
- *         required: false
- *         schema: { type: string, example: "2026-09" }
- *         description: Período en formato AAAA-MM. Por defecto, el mes en curso.
- *       - in: query
- *         name: status
- *         required: false
- *         schema: { type: string, example: "active" }
- *         description: Estado laboral a incluir. Por defecto "active"; "all" incluye a todos.
- *     responses:
- *       200:
- *         description: Planilla de bonos calculada del período.
- *       403:
- *         description: Sin el permiso "payroll".
- *       500:
- *         description: Error interno del servidor.
- */
-router.route("/bonuses").get(
-    validateAuthCookie(["admin", "employee"]),
-    requirePermission("payroll"),
-    payrollController.getBonusPayroll
-);
-
 /**
  * @swagger
  * /users/payroll/employee/{id}:
  *   get:
  *     summary: Boleta de pago de un empleado
  *     description: >
- *       Devuelve la nómina individual (planilla general) de un empleado para
- *       el período: sus datos, salario, deducciones de ley (AFP, ISSS, ISR) y
- *       el neto a pagar. No incluye bonos (ver /users/payroll/bonuses).
+ *       Devuelve la nómina individual de un empleado para el período: sus
+ *       datos, salario, bono vigente, deducciones de ley (AFP, ISSS, ISR) y
+ *       el total a pagar.
  *       Requiere el permiso "payroll".
  *     tags: [Usuarios - Planilla]
  *     security:

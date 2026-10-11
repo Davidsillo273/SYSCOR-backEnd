@@ -119,6 +119,25 @@ export const relayToKitchenDevices = (event, payload = {}) => {
         else if (payload.kitchen) {
             const { enabled, warningMinutes, maxMinutes } = payload.kitchen;
             data = { kitchen: { enabled, warningMinutes, maxMinutes } };
+        } else if (payload.deliveryPackage) {
+            // Paquete de reparto: la cocina solo necesita qué órdenes van
+            // juntas y el nombre corto de quien se las lleva (para entregarle
+            // las bolsas). Nada de direcciones, montos ni datos del cliente.
+            const {
+                code, kitchenNumbers, orderCodes, packageKitchenNumbers, packageOrderCodes, driverName, added,
+            } = payload.deliveryPackage;
+            const numbers = (list) => (list || []).filter((n) => Number.isFinite(n));
+            data = {
+                deliveryPackage: {
+                    code: String(code || ""),
+                    kitchenNumbers: numbers(kitchenNumbers),
+                    orderCodes: (orderCodes || []).map(String),
+                    packageKitchenNumbers: numbers(packageKitchenNumbers),
+                    packageOrderCodes: (packageOrderCodes || []).map(String),
+                    driverName: String(driverName || ""),
+                    added: Boolean(added),
+                },
+            };
         } else if (payload.orderId) data = { orderId: String(payload.orderId) };
         else return;
         kitchenNs.to(DEVICES_ROOM).emit(event, data);

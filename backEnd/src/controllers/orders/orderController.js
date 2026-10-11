@@ -21,6 +21,8 @@ import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
 import { cancelReservationOfOrder, syncReservations, publicTable } from "../../utils/tables/reservationUtils.js";
 import { HOLD_MS, canHold, publicHold, notOnHoldFilter, releaseExpiredHolds, emitOrder } from "../../utils/orders/orderHoldUtils.js";
+import { dispatchDeliveries, detachOrderFromBatch } from "../../utils/panchita/dispatchUtils.js";
+import { isCashierOpen } from "../../utils/cashier/cashierStatusUtils.js";
 
 const orderController = {};
 
@@ -390,7 +392,7 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
   // un pedido cuyo tiempo ya terminó se pueda cocinar de inmediato.
   if (status === 'preparing') await releaseExpiredHolds();
 
-  const previousOrder = await Order.findById(orderId).select("status hold waiting isDelivery driver deliveryStatus");
+  const previousOrder = await Order.findById(orderId).select("status hold waiting isDelivery driver deliveryStatus deliveryBatch");
   if (!previousOrder) return { code: 404, body: { message: "Order not found" } };
 
   // El cliente está agregando productos: cocina no lo empieza hasta que
@@ -455,7 +457,21 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
   }
 
   emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: order.toObject() });
-  if (opensForDrivers) emitToTypes(['delivery'], 'delivery:queued', { orderId: order._id });
+  if (opensForDrivers) {
+    emitToTypes(['delivery'], 'delivery:queued', { orderId: order._id });
+    // Chef Panchita lo agrupa con otros domicilios cercanos y se lo asigna a
+    // un repartidor libre. No se espera: cocina no tiene por qué aguardar.
+    dispatchDeliveries('order_ready');
+  }
+  // Un pedido que ya iba en un paquete sale de él si se cancela, o si cocina
+  // lo regresa a preparación antes de que el repartidor salga.
+  const leavesPackage = previousOrder.deliveryBatch && (
+    status === 'cancelled'
+    || (['pending', 'preparing'].includes(status) && previousOrder.deliveryStatus === 'accepted')
+  );
+  if (leavesPackage) {
+    detachOrderFromBatch(previousOrder).catch((error) => console.error('detachOrderFromBatch:', error));
+  }
 
   // Push al cliente de la app. No se espera: cocina no tiene por qué
   // aguardar a que salga el aviso.
@@ -905,6 +921,8 @@ orderController.getWaiterDashboard = async (req, res) => {
         customerName: table.status === 'ocupada' ? table.customerName || null : null,
         peopleCount: table.status === 'ocupada' ? table.peopleCount || null : null,
         occupiedAt: table.status === 'ocupada' ? table.occupiedAt || null : null,
+        // El mesero ya mandó la cuenta a caja ("Enviar a caja")
+        billRequestedAt: table.status === 'ocupada' ? table.billRequestedAt || null : null,
         activeOrders: tableOrders.map((order) => ({
           _id: order._id,
           // Código que ven todos ("CL03-02") y quién tomó la comanda, para que
@@ -946,73 +964,112 @@ orderController.getWaiterDashboard = async (req, res) => {
   }
 };
 
-// Cobra la cuenta abierta de una mesa: todas sus comandas pendientes de pago
-// quedan pagadas con el mÃ©todo indicado y, si aÃºn no se habÃ­an servido, se
-// marcan como entregadas (lo que genera su factura, igual que updateOrderStatus).
-orderController.checkoutTable = async (req, res) => {
-  try {
-    const { paymentMethod } = req.body;
-    if (!['cash', 'card'].includes(paymentMethod)) {
-      return res.status(400).json({ message: "El mÃ©todo de pago debe ser 'cash' o 'card'" });
-    }
+// Comandas de la cuenta abierta de una mesa que siguen pendientes de pago.
+// La usan el cobro del mesero (checkoutTable) y la caja (cashierController).
+export const findOpenTabOrders = async (table) => {
+  const candidates = await Order.find({
+    orderType: 'local',
+    table: table._id,
+    paymentStatus: 'pending',
+    status: { $in: [...KITCHEN_ACTIVE_STATUSES, 'delivered'] },
+  });
+  return candidates.filter((o) => belongsToOpenTab(o, table));
+};
 
-    const table = await TablesModel.findById(req.params.tableId).lean();
-    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
-    if (table.status !== 'ocupada') {
-      return res.status(400).json({ message: "Solo se puede cobrar la cuenta de una mesa ocupada" });
-    }
+export { belongsToOpenTab, KITCHEN_ACTIVE_STATUSES };
 
-    const candidates = await Order.find({
-      orderType: 'local',
-      table: table._id,
-      paymentStatus: 'pending',
-      status: { $in: [...KITCHEN_ACTIVE_STATUSES, 'delivered'] },
-    });
-    const orders = candidates.filter((o) => belongsToOpenTab(o, table));
+/**
+ * Cobra la cuenta abierta de una mesa: todas sus comandas pendientes de pago
+ * quedan pagadas con el método indicado y, si aún no se habían servido, se
+ * marcan como entregadas (lo que genera su factura, igual que updateOrderStatus).
+ *
+ * Devuelve { code, body } con el error, o { code: 200, table, orders, total }.
+ * No responde ni notifica: eso lo decide quien la llama (mesero o caja).
+ */
+export const settleTableTab = async ({ tableId, paymentMethod }) => {
+  if (!['cash', 'card'].includes(paymentMethod)) {
+    return { code: 400, body: { message: "El método de pago debe ser 'cash' o 'card'" } };
+  }
 
-    // Un segundo tiempo que sigue en espera no se ha cocinado: hay que
-    // marcharlo o cancelarlo antes de cobrar, o se cobraría sin servirse.
-    if (orders.some((o) => o.waiting && o.status === 'pending')) {
-      return res.status(409).json({
+  const table = await TablesModel.findById(tableId).lean();
+  if (!table) return { code: 404, body: { message: "Mesa no encontrada" } };
+  if (table.status !== 'ocupada') {
+    return { code: 400, body: { message: "Solo se puede cobrar la cuenta de una mesa ocupada" } };
+  }
+
+  const orders = await findOpenTabOrders(table);
+
+  // Un segundo tiempo que sigue en espera no se ha cocinado: hay que
+  // marcharlo o cancelarlo antes de cobrar, o se cobraría sin servirse.
+  if (orders.some((o) => o.waiting && o.status === 'pending')) {
+    return {
+      code: 409,
+      body: {
         title: "Hay un tiempo en espera",
         message: "Esta mesa tiene una comanda esperando a que la marches. Márchala o cancélala antes de cobrar.",
+      },
+    };
+  }
+
+  if (orders.length === 0) {
+    return { code: 400, body: { message: "La mesa no tiene consumos pendientes de cobro" } };
+  }
+
+  let total = 0;
+  for (const order of orders) {
+    const wasDelivered = order.status === 'delivered';
+    order.paymentStatus = 'paid';
+    order.paymentMethod = paymentMethod;
+    if (!wasDelivered) {
+      order.status = 'delivered';
+      order.statusHistory.push({ status: 'delivered', changedAt: new Date() });
+    }
+    await order.save();
+    total += order.total || 0;
+    // Si la comanda ya se había servido, su factura se generó sin método de
+    // pago ("por definir"): se completa ahora.
+    if (wasDelivered) await Invoice.updateOne({ order: order._id }, { $set: { paymentMethod } });
+
+    const populated = await Order.findById(order._id)
+      .populate('table', 'number status')
+      .populate(WAITER_POPULATE)
+      .populate('customer', 'personalInfo');
+
+    if (!wasDelivered) await generateInvoice(populated);
+    emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: populated.toObject() });
+  }
+
+  // La cuenta ya no está "solicitada" en caja
+  if (table.billRequestedAt) {
+    await TablesModel.updateOne({ _id: table._id }, { $set: { billRequestedAt: null, billRequestedBy: null } });
+  }
+
+  return { code: 200, table, orders, total: Math.round(total * 100) / 100 };
+};
+
+// Cobra la cuenta abierta de una mesa desde la app del mesero. Con un turno
+// de caja abierto no se puede: las cuentas se cobran en caja ("Enviar a caja").
+orderController.checkoutTable = async (req, res) => {
+  try {
+    if (await isCashierOpen()) {
+      return res.status(409).json({
+        code: "CASHIER_OPEN",
+        title: "La caja está abierta",
+        message: "Con la caja abierta, las cuentas se cobran en caja. Usa \"Enviar a caja\".",
       });
     }
 
-    if (orders.length === 0) {
-      return res.status(400).json({ message: "La mesa no tiene consumos pendientes de cobro" });
-    }
-
-    let total = 0;
-    for (const order of orders) {
-      const wasDelivered = order.status === 'delivered';
-      order.paymentStatus = 'paid';
-      order.paymentMethod = paymentMethod;
-      if (!wasDelivered) {
-        order.status = 'delivered';
-        order.statusHistory.push({ status: 'delivered', changedAt: new Date() });
-      }
-      await order.save();
-      total += order.total || 0;
-      // Si la comanda ya se había servido, su factura se generó sin método de
-      // pago ("por definir"): se completa ahora.
-      if (wasDelivered) await Invoice.updateOne({ order: order._id }, { $set: { paymentMethod } });
-
-      const populated = await Order.findById(order._id)
-        .populate('table', 'number status')
-        .populate(WAITER_POPULATE)
-        .populate('customer', 'personalInfo');
-
-      if (!wasDelivered) await generateInvoice(populated);
-      emitToRoles(ORDERS_AUDIENCE, SOCKET_EVENTS.ORDER_UPDATED, { order: populated.toObject() });
-    }
+    const { paymentMethod } = req.body;
+    const result = await settleTableTab({ tableId: req.params.tableId, paymentMethod });
+    if (result.code !== 200) return res.status(result.code).json(result.body);
+    const { table, orders, total } = result;
 
     await notificationUtils.createNotification({
       req,
       category: "orders",
       action: "updated",
       title: "Cuenta cobrada",
-      message: (actor) => `${actor.name} cobrÃ³ la cuenta de la Mesa ${table.number} ($${total.toFixed(2)})`,
+      message: (actor) => `${actor.name} cobró la cuenta de la Mesa ${table.number} ($${total.toFixed(2)})`,
       icon: "receipt",
       severity: "success",
       entity: { model: "Tables", id: table._id, label: `Mesa ${table.number}` },
@@ -1024,6 +1081,39 @@ orderController.checkoutTable = async (req, res) => {
     });
   } catch (error) {
     console.error("Error en checkoutTable:", error);
+    return res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+// "Enviar a caja": con la caja abierta, el mesero no cobra; marca la cuenta
+// de la mesa como solicitada y la caja la resalta para cobrarla.
+orderController.requestTableBill = async (req, res) => {
+  try {
+    const table = await TablesModel.findById(req.params.tableId).lean();
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada" });
+    if (table.status !== 'ocupada') {
+      return res.status(400).json({ message: "Solo se puede pedir la cuenta de una mesa ocupada" });
+    }
+    const orders = await findOpenTabOrders(table);
+    if (orders.length === 0) {
+      return res.status(400).json({ message: "La mesa no tiene consumos pendientes de cobro" });
+    }
+
+    const actor = await notificationUtils.resolveActor(req);
+    const updated = await TablesModel.findByIdAndUpdate(
+      table._id,
+      { $set: { billRequestedAt: new Date(), billRequestedBy: actor.name } },
+      { returnDocument: 'after' },
+    );
+    emitToRoles(notificationUtils.AUDIENCE_BY_CATEGORY.tables, SOCKET_EVENTS.TABLE_UPDATED, { table: updated.toObject() });
+
+    const total = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+    return res.status(200).json({
+      message: "Cuenta enviada a caja",
+      data: { tableId: table._id, total: Math.round(total * 100) / 100 },
+    });
+  } catch (error) {
+    console.error("Error en requestTableBill:", error);
     return res.status(500).json({ message: "Error interno del servidor" });
   }
 };

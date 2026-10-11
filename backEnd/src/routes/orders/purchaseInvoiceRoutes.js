@@ -35,6 +35,32 @@ router.route("/tax-report").get(...guard, purchaseInvoiceController.getTaxReport
 
 /**
  * @swagger
+ * /purchase-invoices/purchase-book:
+ *   get:
+ *     summary: Libro de Compras de un período
+ *     description: >
+ *       Anexo de compras del F-07: una fila por documento con correlativo,
+ *       clase y tipo de documento, NRC, desglose por columna (gravadas,
+ *       exentas, internaciones, importaciones, sujetos excluidos), crédito
+ *       fiscal, IVA retenido, total y clasificación para renta. Incluye los
+ *       totales por columna y avisa qué filas están incompletas.
+ *     tags: [Contabilidad]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         schema: { type: string, example: "2026-07" }
+ *         description: Período AAAA-MM. Por defecto, el mes en curso.
+ *     responses:
+ *       200: { description: Libro calculado. }
+ *       403: { description: Sin el permiso "reports". }
+ */
+// También va ANTES de "/:id".
+router.route("/purchase-book").get(...guard, purchaseInvoiceController.getPurchaseBook);
+
+/**
+ * @swagger
  * /purchase-invoices:
  *   get:
  *     summary: Lista las facturas de compra
@@ -106,6 +132,24 @@ router.route("/:id/processed").patch(...guard, purchaseInvoiceController.toggleP
 /**
  * @swagger
  * /purchase-invoices/{id}:
+ *   put:
+ *     summary: Corrige una factura de compra
+ *     description: >
+ *       Actualiza solo los campos enviados (multipart, con comprobante
+ *       opcional). Sirve para completar los datos del Libro de Compras.
+ *     tags: [Contabilidad]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Factura actualizada. }
+ *       400: { description: Datos inválidos. }
+ *       404: { description: Factura no encontrada. }
+ *       409: { description: Choca con otra factura del mismo proveedor. }
  *   delete:
  *     summary: Elimina una factura de compra
  *     tags: [Contabilidad]
@@ -120,6 +164,8 @@ router.route("/:id/processed").patch(...guard, purchaseInvoiceController.toggleP
  *       200: { description: Factura eliminada. }
  *       404: { description: Factura no encontrada. }
  */
-router.route("/:id").delete(...guard, purchaseInvoiceController.deletePurchaseInvoice);
+router.route("/:id")
+    .put(...guard, upload.single("file"), purchaseInvoiceController.updatePurchaseInvoice)
+    .delete(...guard, purchaseInvoiceController.deletePurchaseInvoice);
 
 export default router;
