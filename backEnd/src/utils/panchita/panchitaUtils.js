@@ -55,7 +55,7 @@ export const summarizeOrder = (order) => ({
     total: order.total,
     createdAt: order.createdAt,
     items: (order.items || []).map((i) => ({ name: i.name, quantity: i.quantity, price: i.price })),
-    driverMessages: (order.driverMessages || []).map((m) => ({ text: m.text, createdAt: m.createdAt })),
+    driverMessages: (order.driverMessages || []).map((m) => ({ from: m.from || "customer", text: m.text, createdAt: m.createdAt })),
 });
 
 // Resuelve "mi pedido", "el de ayer" o un código de orden (AD27-01) a un pedido

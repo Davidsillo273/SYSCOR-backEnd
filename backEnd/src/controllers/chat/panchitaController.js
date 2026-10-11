@@ -25,7 +25,7 @@ import {
     usualOrder,
     suggestDriverMessages,
 } from "../../utils/panchita/panchitaUtils.js";
-import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
+import { postChatMessage, chatSummary } from "../../utils/orders/orderChatUtils.js";
 import { findOrderCode } from "../../utils/orders/orderCodeUtils.js";
 import Reservation from "../../models/tables/reservationModel.js";
 import { SUPPORT, SUPPORT_LINKS } from "../../constants/support.js";
@@ -298,38 +298,14 @@ export const panchitaToolDeclarations = () => Object.values(TOOLS).map((t) => t.
 
 // ── MENSAJES AL REPARTIDOR ───────────────────────────────────────────────
 
-const MAX_DRIVER_MESSAGES = 10;
-
-// Guarda el mensaje en el pedido y lo manda en tiempo real a los
-// repartidores y al panel. Todavía no hay repartidor asignado por pedido, así
-// que le llega a todos los empleados de tipo "delivery".
+// Lo que el cliente le manda al repartidor desde Panchita (o con un toque
+// desde la tarjeta de seguimiento) entra al chat del pedido, así que el
+// repartidor lo ve en la misma conversación y le puede contestar.
 const sendDriverMessage = async (order, rawText, preset) => {
     if (!order) return { error: "No encontré un pedido en curso." };
-    if (order.orderType !== "online" || !order.isDelivery) {
-        return { error: "Ese pedido no es a domicilio, así que no lleva repartidor." };
-    }
-    if (!ACTIVE_ORDER_STATUSES.includes(order.status)) {
-        return { error: `El pedido ${shortId(order)} ya no está en camino.` };
-    }
-    const text = String(rawText || "").replace(/\s+/g, " ").trim().slice(0, 200);
-    if (text.length < 2) return { error: "El mensaje está vacío." };
-    if ((order.driverMessages || []).length >= MAX_DRIVER_MESSAGES) {
-        return { error: "Ya enviaste varios mensajes en este pedido. Si es urgente, llama al local." };
-    }
-
-    const message = { text, preset: !!preset, createdAt: new Date() };
-    await Order.updateOne({ _id: order._id }, { $push: { driverMessages: message } });
-
-    const payload = {
-        orderId: order._id,
-        shortId: shortId(order),
-        deliveryAddress: order.deliveryAddress,
-        message,
-    };
-    emitToTypes(["delivery"], SOCKET_EVENTS.ORDER_DRIVER_MESSAGE, payload);
-    emitToRoles(["admin"], SOCKET_EVENTS.ORDER_DRIVER_MESSAGE, payload);
-
-    return { text };
+    const result = await postChatMessage(order, "customer", rawText, { preset });
+    if (result.error) return { error: result.error };
+    return { text: result.message.text };
 };
 
 // ── CHAT ─────────────────────────────────────────────────────────────────
@@ -507,6 +483,7 @@ panchitaController.getOverview = async (req, res) => {
                 ...summarizeOrder(order),
                 eta,
                 quickMessages: order.isDelivery ? suggestDriverMessages(order, eta) : [],
+                chat: chatSummary(order, "customer"),
             });
             alerts.push(...buildAlerts(order, eta));
         }

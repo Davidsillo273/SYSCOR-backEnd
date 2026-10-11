@@ -39,6 +39,14 @@ export const SOCKET_EVENTS = {
     ORDER_DELETED: "order:deleted",
     // Mensaje del cliente para el repartidor (desde Panchita en la app)
     ORDER_DRIVER_MESSAGE: "order:driver_message",
+    // Chat del pedido cliente <-> repartidor: se manda solo al otro lado
+    // (room user:<id>), ver utils/orders/orderChatUtils.js
+    ORDER_CHAT_MESSAGE: "order:chat_message",
+    // El otro lado leyó el chat (palomitas de "visto")
+    ORDER_CHAT_READ: "order:chat_read",
+    // Al cliente: uno de SUS pedidos cambió. Las apps móviles recargan con
+    // esto (el pedido completo solo viaja al personal).
+    ORDER_CHANGED: "order:changed",
     // Mesas
     TABLE_CREATED: "table:created",
     TABLE_UPDATED: "table:updated",
@@ -86,6 +94,24 @@ const KITCHEN_RELAYED_EVENTS = new Set([
     SOCKET_EVENTS.DELIVERY_PACKAGE_ASSIGNED,
 ]);
 
+// Cambios de pedido que también se le avisan al cliente dueño
+const CUSTOMER_NOTIFIED_EVENTS = new Set([
+    SOCKET_EVENTS.ORDER_CREATED,
+    SOCKET_EVENTS.ORDER_UPDATED,
+]);
+
+// `order.customer` puede venir poblado o como id. Al cliente no se le manda
+// el pedido completo (trae datos internos): solo qué pedido y su estado.
+const notifyOrderCustomer = (order) => {
+    const customerId = order?.customer?._id || order?.customer;
+    if (!io || !customerId || !order?._id) return;
+    io.to(`user:${String(customerId)}`).emit(SOCKET_EVENTS.ORDER_CHANGED, {
+        orderId: String(order._id),
+        status: order.status,
+        deliveryStatus: order.deliveryStatus || null,
+    });
+};
+
 /**
  * Lee la cookie de sesión del handshake y devuelve el token.
  *
@@ -121,7 +147,9 @@ const readAuthCookie = (handshake) => {
  */
 const authenticateSocket = async (socket, next) => {
     try {
-        const token = readAuthCookie(socket.handshake);
+        // Navegador: la cookie viaja sola en el handshake. Apps móviles: mandan
+        // en auth.token el ticket de /auth/socket-ticket (mismo secreto).
+        const token = readAuthCookie(socket.handshake) || socket.handshake?.auth?.token;
         if (!token) return next(new Error("Sesión requerida"));
 
         const decoded = jsonwebtoken.verify(token, config.jwt.secret);
@@ -261,6 +289,9 @@ export const emitToRoles = (roles, event, payload) => {
         if (targets.length === 0) return;
 
         io.to(targets).emit(event, payload);
+
+        // El cliente dueño del pedido también se entera (solo el aviso).
+        if (CUSTOMER_NOTIFIED_EVENTS.has(event)) notifyOrderCustomer(payload?.order);
 
         // Las comandas también le llegan a la cocina, por su propio namespace
         if (KITCHEN_RELAYED_EVENTS.has(event)) relayToKitchenDevices(event, payload);

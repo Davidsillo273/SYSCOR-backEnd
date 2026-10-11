@@ -17,6 +17,7 @@ import { resolvePeriodRange, buildDateMatch } from "../../utils/orders/periodUti
 import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { notifyOrderStatus } from "../../utils/notifications/pushUtils.js";
+import { isChatOrder, chatSummary } from "../../utils/orders/orderChatUtils.js";
 import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
 import { cancelReservationOfOrder, syncReservations, publicTable } from "../../utils/tables/reservationUtils.js";
@@ -340,7 +341,7 @@ orderController.getMyOrders = async (req, res) => {
     if (['local', 'online'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
 
     const orders = await Order.find(filter)
-      .select('code hold orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus payment.creditApplied items total status statusHistory cancellation rating createdAt updatedAt')
+      .select('code hold orderType table isDelivery fulfillment reservation deliveryAddress scheduledFor paymentMethod paymentStatus payment.creditApplied items total status statusHistory cancellation rating createdAt updatedAt driver deliveryStatus driverMessages chatRead')
       .populate('table', 'number')
       .populate({ path: 'reservation', select: 'status reservedFor expiresAt partySize alias table checkedInAt', populate: { path: 'table' } })
       .sort({ createdAt: -1 });
@@ -365,6 +366,11 @@ orderController.getMyOrders = async (req, res) => {
           cancelDeadline: null,
           hold: publicHold(order),
           canHold: canHold(order),
+          // Chat con el repartidor (solo a domicilio). Los mensajes completos
+          // se piden aparte, a /orders/chat/:id.
+          chat: isChatOrder(order) ? chatSummary(order, 'customer') : null,
+          driverMessages: undefined,
+          chatRead: undefined,
         };
       }),
     );

@@ -18,6 +18,7 @@ import {
 } from "../../utils/panchita/dispatchUtils.js";
 import { applyOrderStatus } from "./orderController.js";
 import { emitToRoles, emitToTypes, emitToUser, SOCKET_EVENTS } from "../../config/socket.js";
+import { chatSummary } from "../../utils/orders/orderChatUtils.js";
 
 // Reparto interno del restaurante: los repartidores son empleados del local.
 // Cuando cocina termina un pedido a domicilio, Chef Panchita lo agrupa con
@@ -73,7 +74,8 @@ const formatDelivery = (order) => {
   const distanceKm = destination
     ? Math.round(haversineKm(origin, destination) * STREET_FACTOR * 10) / 10
     : null;
-  const lastMessage = order.driverMessages?.[order.driverMessages.length - 1];
+  // Indicación más reciente del cliente (ej. "Déjalo en la recepción").
+  const lastMessage = [...(order.driverMessages || [])].reverse().find((m) => (m.from || "customer") === "customer");
 
   return {
     id: order._id,
@@ -112,6 +114,7 @@ const formatDelivery = (order) => {
     startedAt: lastStatusAt(order, "on_route"),
     deliveredAt: lastStatusAt(order, "delivered") || (order.deliveryStatus === "delivered" ? order.updatedAt : null),
     createdAt: order.createdAt,
+    chat: chatSummary(order, "driver"),
   };
 };
 

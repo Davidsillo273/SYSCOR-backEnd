@@ -147,6 +147,9 @@ const employeeSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Teléfonos (ExpoPushToken) de la app de empleados, para avisos al
+    // repartidor (paquete asignado, mensajes del cliente). Ver pushUtils.
+    pushTokens: { type: [String], default: [] },
   },
   {
     timestamps: true,

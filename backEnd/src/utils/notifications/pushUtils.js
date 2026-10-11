@@ -1,4 +1,5 @@
 import CustomerModel from "../../models/users/customerModel.js";
+import EmployeeModel from "../../models/users/employeeModel.js";
 
 // Notificaciones push a la app de clientes, por el servicio de Expo
 // (https://docs.expo.dev/push-notifications/sending-notifications/). La app
@@ -12,33 +13,47 @@ const TOKEN_PATTERN = /^Expo(nent)?PushToken\[[^\]]+\]$/;
 
 export const isPushToken = (token) => typeof token === "string" && TOKEN_PATTERN.test(token);
 
-// Manda { title, body, data } a todos los teléfonos del cliente. Los tokens
-// que Expo reporta como dados de baja (app desinstalada) se borran.
-export const sendPushToCustomer = async (customerId, { title, body, data = {} }) => {
+// Manda { title, body, data } a todos los teléfonos de un usuario (cliente o
+// empleado). Los tokens que Expo reporta como dados de baja (app
+// desinstalada) se borran.
+const sendPushToUser = async (Model, userId, { title, body, data = {} }, channelId) => {
+    if (!userId) return;
+    const user = await Model.findById(userId).select("pushTokens");
+    const tokens = (user?.pushTokens || []).filter(isPushToken);
+    if (tokens.length === 0) return;
+
+    const response = await fetch(EXPO_PUSH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(
+            tokens.map((to) => ({ to, title, body, data, sound: "default", channelId, priority: "high" })),
+        ),
+        signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json().catch(() => null);
+
+    const dead = (result?.data || [])
+        .map((ticket, i) => (ticket?.details?.error === "DeviceNotRegistered" ? tokens[i] : null))
+        .filter(Boolean);
+    if (dead.length > 0) {
+        await Model.updateOne({ _id: userId }, { $pull: { pushTokens: { $in: dead } } });
+    }
+};
+
+export const sendPushToCustomer = async (customerId, message) => {
     try {
-        if (!customerId) return;
-        const customer = await CustomerModel.findById(customerId).select("pushTokens");
-        const tokens = (customer?.pushTokens || []).filter(isPushToken);
-        if (tokens.length === 0) return;
-
-        const response = await fetch(EXPO_PUSH_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify(
-                tokens.map((to) => ({ to, title, body, data, sound: "default", channelId: "orders", priority: "high" })),
-            ),
-            signal: AbortSignal.timeout(10000),
-        });
-        const result = await response.json().catch(() => null);
-
-        const dead = (result?.data || [])
-            .map((ticket, i) => (ticket?.details?.error === "DeviceNotRegistered" ? tokens[i] : null))
-            .filter(Boolean);
-        if (dead.length > 0) {
-            await CustomerModel.updateOne({ _id: customerId }, { $pull: { pushTokens: { $in: dead } } });
-        }
+        await sendPushToUser(CustomerModel, customerId, message, "orders");
     } catch (error) {
         console.error("pushUtils.sendPushToCustomer:", error.message);
+    }
+};
+
+// App de empleados: canal "work" (ver apps/employee pushApi).
+export const sendPushToEmployee = async (employeeId, message) => {
+    try {
+        await sendPushToUser(EmployeeModel, employeeId, message, "work");
+    } catch (error) {
+        console.error("pushUtils.sendPushToEmployee:", error.message);
     }
 };
 
@@ -74,4 +89,4 @@ export const notifyOrderStatus = async (order, status) => {
     });
 };
 
-export default { isPushToken, sendPushToCustomer, notifyOrderStatus };
+export default { isPushToken, sendPushToCustomer, sendPushToEmployee, notifyOrderStatus };

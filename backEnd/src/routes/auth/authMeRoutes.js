@@ -1,5 +1,6 @@
 import { Router } from "express";
 import authMeController from "../../controllers/auth/authMeController.js";
+import realtimeAuthController from "../../controllers/auth/realtimeAuthController.js";
 import {validateAuthCookie} from "../../middlewares/auth/authMiddleware.js"; 
 
 const router = Router();
@@ -24,5 +25,25 @@ const router = Router();
  *         description: Error interno del servidor.
  */
 router.get("/me", validateAuthCookie(["admin", "employee", "customer"]), authMeController.getMe);
+
+/**
+ * @swagger
+ * /auth/socket-ticket:
+ *   get:
+ *     summary: Ticket de 2 minutos para conectar el tiempo real (Socket.IO) desde las apps móviles
+ *     tags: [Auth - Común]
+ * /auth/push-token:
+ *   post:
+ *     summary: Registra el teléfono del empleado para notificaciones push ({ token })
+ *     tags: [Auth - Común]
+ *   delete:
+ *     summary: Quita el teléfono del empleado de las notificaciones push ({ token })
+ *     tags: [Auth - Común]
+ */
+router.get("/socket-ticket", validateAuthCookie(["admin", "employee", "customer"]), realtimeAuthController.getSocketTicket);
+router
+    .route("/push-token")
+    .post(validateAuthCookie(["employee"]), realtimeAuthController.registerPushToken)
+    .delete(validateAuthCookie(["employee"]), realtimeAuthController.removePushToken);
 
 export default router;

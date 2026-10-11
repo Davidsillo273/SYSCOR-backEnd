@@ -26,6 +26,7 @@ import google, { hasGoogleKey } from "./googleMapsUtils.js";
 import free from "./freeMapsUtils.js";
 import { orderCode } from "../orders/orderCodeUtils.js";
 import { emitToRoles, emitToTypes, emitToUser, SOCKET_EVENTS } from "../../config/socket.js";
+import { sendPushToEmployee } from "../notifications/pushUtils.js";
 
 // --- Reglas del agrupamiento ---
 // Máximo de paradas por paquete: más que esto y el primer cliente espera
@@ -268,6 +269,12 @@ const announce = async (batch, driver, orders, { added = false, allOrders = orde
   populated.forEach((order) => emitToRoles(["admin", "employee"], SOCKET_EVENTS.ORDER_UPDATED, { order }));
 
   emitToUser(batch.driver, "delivery:package_assigned", { batchId: batch._id, added });
+  // Con la app cerrada o en segundo plano, el aviso llega al teléfono.
+  sendPushToEmployee(batch.driver, {
+    title: added ? "Panchita sumó un pedido a tu paquete" : "Chef Panchita te asignó un paquete",
+    body: `${batch.code}: ${allOrders.length} ${allOrders.length === 1 ? "entrega" : "entregas"}. Pasa por el mostrador a recogerlo.`,
+    data: { type: "delivery_package", batchId: String(batch._id) },
+  });
   emitToTypes(["delivery"], "delivery:queue_changed", {});
   emitToRoles(["admin", "employee"], SOCKET_EVENTS.DELIVERY_PACKAGE_ASSIGNED, {
     deliveryPackage: {

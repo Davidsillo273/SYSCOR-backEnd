@@ -191,15 +191,24 @@ const orderSchema = new Schema({
   // Foto opcional de la entrega (URL de Cloudinary) que toma el repartidor al confirmar.
   deliveryProof: { type: String, default: null },
 
-  // Mensajes del cliente para el repartidor (ej. "Déjalo en la recepción").
-  // Los manda desde la app, con un toque o escritos por él.
+  // Chat del pedido entre el cliente y su repartidor (ver
+  // utils/orders/orderChatUtils.js). Los mensajes de un toque que el cliente
+  // manda desde Panchita también caen aquí, con preset: true.
   driverMessages: [
     {
-      text: { type: String, maxlength: 200 },
+      // Quién lo escribió. Los mensajes viejos (antes del chat) eran todos
+      // del cliente, por eso es el valor por defecto.
+      from: { type: String, enum: ["customer", "driver"], default: "customer" },
+      text: { type: String, maxlength: 500 },
       preset: { type: Boolean, default: false },
       createdAt: { type: Date, default: Date.now }
     }
   ],
+  // Hasta cuándo leyó el chat cada lado: lo posterior del otro es "no leído".
+  chatRead: {
+    customer: { type: Date, default: null },
+    driver: { type: Date, default: null },
+  },
   // Última estimación de entrega que calculó Panchita (ver etaUtils). Se
   // guarda para no consultar a Google en cada vistazo del cliente.
   eta: { type: mongoose.Schema.Types.Mixed, default: null },
