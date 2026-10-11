@@ -18,6 +18,7 @@ import checkoutRoutes from "../orders/checkoutRoutes.js";
 import panchitaRoutes from "../chat/panchitaRoutes.js";
 import tablesRoutes from "../tables/tablesRoutes.js"
 import reservationRoutes from "../tables/reservationRoutes.js";
+import tableServiceRoutes from "../tables/tableServiceRoutes.js";
 import notificationsRoutes from "../notifications/notificationsRoutes.js";
 import settingsRoutes from "../settings/settingsRoutes.js";
 import kitchenRoutes from "../kitchen/kitchenRoutes.js";
@@ -104,6 +105,8 @@ router.use("/users/dui-scan", duiScanRoutes);
 router.use("/inventory", inventoryRoutes);
 router.use("/tables", tablesRoutes);
 router.use("/reservations", reservationRoutes);
+// Página de la mesa (QR): pedir la cuenta o llamar al mesero. Ver tableServiceController.
+router.use("/table-service", tableServiceRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/settings", settingsRoutes);
 // Sistema de Cocina: emparejamiento (admin) y API de las pantallas de cocina

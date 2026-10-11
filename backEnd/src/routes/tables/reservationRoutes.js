@@ -46,7 +46,7 @@ router.get("/availability", validateAuthCookie(["customer"]), reservationControl
  *             type: object
  *             required: [code]
  *             properties:
- *               code: { type: string, example: "syscor-mesa:Ab12Cd34Ef56" }
+ *               code: { type: string, example: "https://mesa.elcorral.app/mesa/Ab12Cd34Ef56", description: "Contenido del QR: el enlace de la mesa (o el formato anterior syscor-mesa:<token>)" }
  *     responses:
  *       200:
  *         description: Reserva con estado checked_in.

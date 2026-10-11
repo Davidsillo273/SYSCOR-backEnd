@@ -1,10 +1,33 @@
 import express from "express";
 import notificationsController from "../../controllers/notifications/notificationsController.js";
+import employeeNotificationsController from "../../controllers/notifications/employeeNotificationsController.js";
 import { validateAuthCookie } from "../../middlewares/auth/authMiddleware.js";
 
 const router = express.Router();
 
 // Todas las rutas exigen sesión: las notificaciones son información interna del negocio
+
+/**
+ * @swagger
+ * /notifications/mine:
+ *   get:
+ *     summary: Bandeja personal del empleado (app de empleados)
+ *     description: Avisos dirigidos a este empleado (paquete asignado, comanda lista...), los más nuevos primero, de 30 en 30. `before` (fecha ISO) pide la página siguiente. Incluye el total de no leídas.
+ *     tags: [Notificaciones]
+ *     security:
+ *       - cookieAuth: []
+ * /notifications/mine/read-all:
+ *   patch:
+ *     summary: Marca como leída toda la bandeja personal del empleado
+ *     tags: [Notificaciones]
+ * /notifications/mine/{id}/read:
+ *   patch:
+ *     summary: Marca como leído un aviso de la bandeja personal del empleado
+ *     tags: [Notificaciones]
+ */
+router.get("/mine", validateAuthCookie(["employee"]), employeeNotificationsController.getMine);
+router.patch("/mine/read-all", validateAuthCookie(["employee"]), employeeNotificationsController.markAllRead);
+router.patch("/mine/:id/read", validateAuthCookie(["employee"]), employeeNotificationsController.markRead);
 
 // Listar las notificaciones del usuario y su contador de no leídas
 /**

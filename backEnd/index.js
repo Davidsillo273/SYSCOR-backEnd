@@ -8,6 +8,7 @@ import { releaseExpiredHolds } from "./src/utils/orders/orderHoldUtils.js";
 import { requestKitchenSync } from "./src/utils/orders/kitchenQueueUtils.js";
 import { migrateRetiredEmployeeTypes } from "./src/utils/users/employeeTypeMigration.js";
 import { dispatchDeliveries } from "./src/utils/panchita/dispatchUtils.js";
+import { sweepTableRequests } from "./src/utils/tables/tableRequestUtils.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
 // ahí; en local seguimos usando el 4000 de siempre.
@@ -46,6 +47,10 @@ async function main() {
     // listo o un repartidor se libera. Esta revisión es el respaldo para lo
     // que quedó esperando (ej. un domicilio que no se pudo ubicar a la primera).
     setInterval(() => dispatchDeliveries("periodic"), 30 * 1000);
+    // Página de la mesa: pasa a todos los meseros las solicitudes que nadie
+    // atendió en 30 s y cierra las de mesas que ya se liberaron. El estado
+    // vive en la base, así que un reinicio no pierde ninguna.
+    setInterval(() => sweepTableRequests().catch((error) => console.error("sweepTableRequests:", error)), 5 * 1000);
     // Mostramos un mensaje en la consola para confirmar que el servidor está funcionando
     console.log(`Server on port ${PORT}`);
 }

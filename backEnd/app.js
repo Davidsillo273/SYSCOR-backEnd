@@ -42,6 +42,8 @@ export const allowedOrigins = [
     "http://localhost:5174",
     // Sistema de caja (SYSCOR-cashierSystem)
     "http://localhost:5175",
+    // Página de la mesa (SYSCOR-tableSystem)
+    "http://localhost:5176",
     ...(process.env.FRONTEND_URL?.split(",").map((url) => url.trim()) || []),
 ];
 

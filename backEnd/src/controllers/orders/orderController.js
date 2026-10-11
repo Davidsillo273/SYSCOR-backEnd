@@ -17,6 +17,7 @@ import { resolvePeriodRange, buildDateMatch } from "../../utils/orders/periodUti
 import { emitToRoles, emitToTypes, SOCKET_EVENTS } from "../../config/socket.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { notifyOrderStatus } from "../../utils/notifications/pushUtils.js";
+import { notifyWaiterOrderReady } from "../../utils/notifications/employeeNotificationUtils.js";
 import { isChatOrder, chatSummary } from "../../utils/orders/orderChatUtils.js";
 import Claim from "../../models/orders/claimModel.js";
 import { creditWallet, orderRef } from "../../utils/wallet/walletUtils.js";
@@ -482,6 +483,8 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
   // Push al cliente de la app. No se espera: cocina no tiene por qué
   // aguardar a que salga el aviso.
   if (previousOrder.status !== status) notifyOrderStatus(order, status);
+  // Comanda de mesa lista: avisa al mesero que la tomó.
+  if (status === 'ready' && previousOrder.status !== 'ready') notifyWaiterOrderReady(order);
 
   return { code: 200, body: { message: "Order updated", data: order }, order };
 };

@@ -14,6 +14,7 @@ import TablesModel, { TABLE_FLOORS } from "../../models/tables/tablesModel.js";
 import Order from "../../models/orders/orderModel.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { emitToRoles, SOCKET_EVENTS } from "../../config/socket.js";
+import { tokenFromCode } from "../../utils/tables/tableQrUtils.js";
 import {
     validateReservationTime,
     tablesForSlot,
@@ -190,14 +191,6 @@ reservationController.assignTable = async (req, res) => {
         console.error("reservationController.assignTable:", error);
         return res.status(500).json({ title: "Error del servidor", message: "No pudimos reservar la mesa." });
     }
-};
-
-// El QR de la mesa trae "syscor-mesa:<token>". Se acepta también el token solo.
-const tokenFromCode = (code) => {
-    const text = String(code || "").trim();
-    const match = text.match(/^syscor-mesa:([A-Za-z0-9_-]{6,64})$/);
-    if (match) return match[1];
-    return /^[A-Za-z0-9_-]{6,64}$/.test(text) ? text : null;
 };
 
 // POST /reservations/check-in { code }
