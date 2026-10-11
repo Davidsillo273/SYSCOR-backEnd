@@ -28,6 +28,7 @@ import notificationUtils from "../../utils/notifications/notificationUtils.js";
 import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTargetsUtils.js";
 import { includedDrinksOf, drinkSurchargeFor, HOUSE_DRINK_CATEGORY } from "../../utils/drinks/drinkUpgradeUtils.js";
 import { logWalletMovement } from "../../utils/wallet/walletUtils.js";
+import { parseGeoPoint } from "../../utils/common/geoPointUtils.js";
 import Reservation from "../../models/tables/reservationModel.js";
 import { isOnHold, emitOrder } from "../../utils/orders/orderHoldUtils.js";
 import {
@@ -366,6 +367,8 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
             isDelivery: checkout.isDelivery,
             fulfillment,
             deliveryAddress: checkout.isDelivery ? checkout.deliveryAddress : undefined,
+            // Punto marcado en el mapa: el repartidor va directo, sin geocodificar.
+            deliveryLocation: checkout.isDelivery ? parseGeoPoint(checkout.deliveryLocation) || undefined : undefined,
             // Comer en el local: cocina lo ve como pedido programado para la hora
             // de llegada.
             scheduledFor: dineIn ? dineIn.reservedFor : null,
@@ -723,6 +726,7 @@ checkoutController.createCheckout = async (req, res) => {
                 : isDelivery
                     ? String(deliveryAddress).trim()
                     : undefined,
+            deliveryLocation: !targetOrder && isDelivery ? parseGeoPoint(req.body?.deliveryLocation) || undefined : undefined,
             pendingCard: saveCard && resolved.newCard ? resolved.newCard : undefined,
             });
         } catch (error) {

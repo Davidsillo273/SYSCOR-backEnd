@@ -22,6 +22,10 @@ const addressSchema = new Schema(
     tag: { type: String, required: true }, // Ej. "Casa", "Trabajo"
     details: { type: String, required: true }, // Dirección completa
     isDefault: { type: Boolean, default: false },
+    // Punto que el cliente marcó en el mapa (opcional). Con esto el repartidor
+    // va directo, sin geocodificar el texto de `details`.
+    latitude: { type: Number, default: null },
+    longitude: { type: Number, default: null },
   },
   { _id: false },
 );

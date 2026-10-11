@@ -6,6 +6,7 @@ import utils from "../../../utils/auth/validationsUsersUtils.js";
 import customerUtils from "../../../utils/auth/customers/validationsCustomersUtils.js";
 import notificationUtils from "../../../utils/notifications/notificationUtils.js";
 import { normalizePhones } from "../../../utils/users/customerContactUtils.js";
+import { parseGeoPoint } from "../../../utils/common/geoPointUtils.js";
 import crypto from "crypto";
 import { config } from "../../../../config.js";
 
@@ -29,12 +30,16 @@ const tokenFrom = (req, bodyKey, cookieName) => req.body?.[bodyKey] || req.cooki
 const ADDRESS_TAGS = { residencia: "Casa", oficina: "Trabajo", otro: "Otro" };
 const clean = (value) => String(value ?? "").trim();
 const toAddress = (a = {}) => {
-  if (clean(a.tag) && clean(a.details)) return { tag: clean(a.tag), details: clean(a.details), isDefault: a.isDefault };
+  // Punto marcado en el mapa (opcional).
+  const point = parseGeoPoint(a);
+  const location = { latitude: point?.latitude ?? null, longitude: point?.longitude ?? null };
+  if (clean(a.tag) && clean(a.details)) return { tag: clean(a.tag), details: clean(a.details), isDefault: a.isDefault, ...location };
   const street = [clean(a.calle), clean(a.numero) ? `#${clean(a.numero)}` : ""].filter(Boolean).join(" ");
   return {
     tag: clean(a.alias) || ADDRESS_TAGS[a.tipo] || (street ? "Casa" : ""),
     details: [street, clean(a.colonia), clean(a.municipio), clean(a.departamento)].filter(Boolean).join(", "),
     isDefault: a.isDefault,
+    ...location,
   };
 };
 
@@ -198,6 +203,8 @@ registerCustomerController.personalInfo = async (req, res) => {
         tag: a.tag,
         details: a.details,
         isDefault: hasDefault ? !!a.isDefault : i === 0,
+        latitude: a.latitude,
+        longitude: a.longitude,
       }));
     }
 

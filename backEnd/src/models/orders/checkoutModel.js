@@ -43,6 +43,12 @@ const checkoutSchema = new Schema(
         // con el pago pendiente (lo marca como pagado quien entrega).
         paymentMethod: { type: String, enum: ["online", "cash", "card_on_delivery"], default: "online" },
         deliveryAddress: { type: String },
+        // Punto que el cliente marcó en el mapa para esa dirección (opcional).
+        // Pasa tal cual a Order.deliveryLocation.
+        deliveryLocation: {
+            latitude: { type: Number },
+            longitude: { type: Number },
+        },
         // 'delivery', 'pickup' o 'dine_in'. Con 'dine_in' se crea además una
         // reserva de mesa con estos datos cuando se aprueba el pago.
         fulfillment: { type: String, enum: ["delivery", "pickup", "dine_in"], default: "pickup" },

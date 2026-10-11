@@ -114,8 +114,14 @@ export const haversineKm = (a, b) => {
 // Minutos de viaje, con tráfico y clima. `destination` se reutiliza del caché.
 const travelEstimate = async (order, cachedDestination) => {
     const origin = { latitude: BRANCH.latitude, longitude: BRANCH.longitude };
-    // Con clave se usa Google; si no hay clave (o Google falla), OpenStreetMap.
+    // Primero el punto que el cliente marcó en el mapa; si no hay, se
+    // geocodifica el texto: con clave se usa Google; si no hay clave (o Google
+    // falla), OpenStreetMap.
+    const pinned = order.deliveryLocation;
     const destination =
+        (Number.isFinite(pinned?.latitude) && Number.isFinite(pinned?.longitude)
+            ? { latitude: pinned.latitude, longitude: pinned.longitude }
+            : null) ||
         cachedDestination ||
         (hasGoogleKey() ? await google.geocodeAddress(order.deliveryAddress) : null) ||
         (await free.geocodeAddress(order.deliveryAddress));

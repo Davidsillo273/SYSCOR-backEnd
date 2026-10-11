@@ -9,6 +9,7 @@ import customerValidations from "../../utils/auth/customers/validationsCustomers
 import contactUtils from "../../utils/users/customerContactUtils.js";
 import cardCryptoUtils from "../../utils/users/cardCryptoUtils.js";
 import { isPushToken } from "../../utils/notifications/pushUtils.js";
+import { parseGeoPoint } from "../../utils/common/geoPointUtils.js";
 
 const customerController = {};
 
@@ -234,6 +235,8 @@ const respondWithAddresses = (res, customer) => {
         tag: address.tag,
         details: address.details,
         isDefault: !!address.isDefault,
+        latitude: address.latitude ?? null,
+        longitude: address.longitude ?? null,
     }));
 
     return res.status(200).json({
@@ -272,7 +275,14 @@ customerController.addAddress = async (req, res) => {
         }
 
         const addresses = customer.personalInfo.addresses || [];
-        addresses.push({ tag: tag.trim(), details: details.trim(), isDefault: false });
+        const point = parseGeoPoint(req.body);
+        addresses.push({
+            tag: tag.trim(),
+            details: details.trim(),
+            isDefault: false,
+            latitude: point?.latitude ?? null,
+            longitude: point?.longitude ?? null,
+        });
 
         // La primera dirección que se agrega queda como predeterminada sí o sí:
         // si no, la libreta existiría pero sin dirección de entrega.
@@ -311,6 +321,13 @@ customerController.updateAddress = async (req, res) => {
 
         addresses[index].tag = tag.trim();
         addresses[index].details = details.trim();
+        // Las versiones anteriores de la app no mandan el punto: si no viene,
+        // se conserva el que había. Si viene vacío, el cliente lo quitó.
+        if ("latitude" in req.body || "longitude" in req.body) {
+            const point = parseGeoPoint(req.body);
+            addresses[index].latitude = point?.latitude ?? null;
+            addresses[index].longitude = point?.longitude ?? null;
+        }
 
         // Solo se mueve la predeterminada cuando se pide explícitamente:
         // quitarle la marca a la actual sin dar otra dejaría al cliente sin ninguna.
