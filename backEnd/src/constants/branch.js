@@ -16,4 +16,19 @@ export const localMinutesOfDay = (date = new Date()) => {
     return (utc + BRANCH.utcOffsetMinutes + 24 * 60) % (24 * 60);
 };
 
+// Fecha y hora en El Salvador, en texto: "sábado 11 de octubre, 2:05 p. m."
+// (o solo "2:05 p. m." con { dateToo: false }). Es lo que se le pasa a
+// Panchita: el servidor corre en UTC y, si recibe una fecha ISO, el modelo
+// lee la hora UTC como si fuera la local (6 horas adelantada).
+const TIME_ZONE = "America/El_Salvador";
+export const formatLocalTime = (value, { dateToo = true } = {}) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const time = date.toLocaleTimeString("es-SV", { timeZone: TIME_ZONE, hour: "numeric", minute: "2-digit" });
+    if (!dateToo) return time;
+    const day = date.toLocaleDateString("es-SV", { timeZone: TIME_ZONE, weekday: "long", day: "numeric", month: "long" });
+    return `${day}, ${time}`;
+};
+
 export default BRANCH;

@@ -29,6 +29,7 @@ import { postChatMessage, chatSummary } from "../../utils/orders/orderChatUtils.
 import { findOrderCode } from "../../utils/orders/orderCodeUtils.js";
 import Reservation from "../../models/tables/reservationModel.js";
 import { SUPPORT, SUPPORT_LINKS } from "../../constants/support.js";
+import { formatLocalTime } from "../../constants/branch.js";
 
 const panchitaController = {};
 
@@ -83,6 +84,18 @@ const PEDIDO_PARAM = {
     description: "Código de orden del pedido (ej. AD27-01, CL27-01 o PL27-01). Omítelo para usar el pedido en curso o el más reciente.",
 };
 
+// Pedido para el modelo: igual que summarizeOrder, pero con las horas ya en
+// hora de El Salvador (con fechas ISO el modelo lee la hora UTC).
+const orderForModel = (order) => {
+    const summary = summarizeOrder(order);
+    return {
+        ...summary,
+        createdAt: formatLocalTime(summary.createdAt),
+        scheduledFor: formatLocalTime(summary.scheduledFor),
+        driverMessages: summary.driverMessages.map((m) => ({ ...m, createdAt: formatLocalTime(m.createdAt, { dateToo: false }) })),
+    };
+};
+
 const TOOLS = {
     contactar_asesor: {
         declaration: {
@@ -121,8 +134,8 @@ const TOOLS = {
             const orders = await Order.find({ customer: ctx.customerId }).sort({ createdAt: -1 }).limit(8).lean();
             return {
                 success: true,
-                active: orders.filter((o) => ACTIVE_ORDER_STATUSES.includes(o.status)).map(summarizeOrder),
-                recent: orders.filter((o) => !ACTIVE_ORDER_STATUSES.includes(o.status)).slice(0, 5).map(summarizeOrder),
+                active: orders.filter((o) => ACTIVE_ORDER_STATUSES.includes(o.status)).map(orderForModel),
+                recent: orders.filter((o) => !ACTIVE_ORDER_STATUSES.includes(o.status)).slice(0, 5).map(orderForModel),
             };
         },
     },
@@ -146,8 +159,8 @@ const TOOLS = {
                     success: true,
                     pedido: shortId(order),
                     tipo: "comer en el local",
-                    horaDeLlegada: reservation?.reservedFor || order.scheduledFor,
-                    mesaGuardadaHasta: reservation?.expiresAt || null,
+                    horaDeLlegada: formatLocalTime(reservation?.reservedFor || order.scheduledFor),
+                    mesaGuardadaHasta: formatLocalTime(reservation?.expiresAt, { dateToo: false }),
                     mesa: reservation?.table?.number || null,
                     estadoReserva: reservation?.status || null,
                     nota: "Cocina lo prepara para la hora de llegada. Al llegar, el cliente escanea el QR de su mesa.",
@@ -161,7 +174,7 @@ const TOOLS = {
                 pedido: shortId(order),
                 minutos: eta.minutes,
                 ventana: eta.window,
-                horaAproximada: eta.arrivalAt,
+                horaAproximada: formatLocalTime(eta.arrivalAt, { dateToo: false }),
                 riesgoDeRetraso: eta.risk,
                 minutosDeRetraso: eta.lateBy,
                 factores: eta.factors.map((f) => f.label),
@@ -370,7 +383,7 @@ panchitaController.chat = async (req, res) => {
             new PanchitaConversation({ customer: req.user.id });
 
         const customer = await CustomerModel.findById(req.user.id).select("personalInfo.name").lean();
-        const systemPrompt = `${SYSTEM_PROMPT}\n\nEl cliente se llama ${customer?.personalInfo?.name || "cliente"}. Fecha y hora actual: ${new Date().toISOString()} (El Salvador es UTC-6).`;
+        const systemPrompt = `${SYSTEM_PROMPT}\n\nEl cliente se llama ${customer?.personalInfo?.name || "cliente"}. Fecha y hora actual en El Salvador: ${formatLocalTime(new Date())}. Usa siempre esta hora; las horas que devuelven las herramientas ya están en hora de El Salvador.`;
 
         let contextOrderCode = null;
         const contextOrderId = String(req.body?.orderId || "");
