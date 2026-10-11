@@ -34,7 +34,8 @@ authMeController.getMe = async (req, res) => {
       id: user._id,
       role,
       type: role === "employee" ? user.personalInfo?.type : undefined,
-      email: user.loginInfo?.email,
+      // El correo interno de un invitado no se muestra.
+      email: user.isGuest ? null : user.loginInfo?.email,
       name: user.personalInfo?.name,
       lastname: user.personalInfo?.lastname,
       image: user.personalInfo?.image || null,
@@ -47,6 +48,9 @@ authMeController.getMe = async (req, res) => {
       phones: role === "customer" ? normalizePhones(user.personalInfo?.phones) : undefined,
       // Saldo a favor (reclamos resueltos por Panchita), usable al pagar
       walletBalance: role === "customer" ? user.wallet?.balance || 0 : undefined,
+      // Compra sin registro: la app oculta lo que exige una cuenta (correo,
+      // contraseña) y ofrece crearla.
+      isGuest: role === "customer" ? !!user.isGuest : undefined,
     });
   } catch (error) {
     console.error("authMeController.getMe:", error);

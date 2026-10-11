@@ -38,6 +38,7 @@ import orderChatRoutes from "../orders/orderChatRoutes.js";
 
 //auth - customers
 import loginCustomerRoutes from "../auth/customers/loginCustomerRoutes.js";
+import guestCustomerRoutes from "../auth/customers/guestCustomerRoutes.js";
 import registerCustomerRoutes from "../auth/customers/registerCustomerRoutes.js";
 //auth - employees
 import inviteEmployeeRoutes from "../auth/employees/inviteEmployeeRoutes.js";
@@ -116,6 +117,8 @@ router.use("/chat", loginHelpRoutes);
 //auth - customers
 router.use("/auth/customers/register", registerCustomerRoutes);
 router.use("/auth/customers/login", loginCustomerRoutes);
+// Comprar sin registrarse (cuenta de invitado)
+router.use("/auth/customers/guest", guestCustomerRoutes);
 //auth - employees
 router.use("/auth/employees/invite", inviteEmployeeRoutes);
 router.use("/auth/employees/login", loginEmployeeRoutes);

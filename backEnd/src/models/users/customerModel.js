@@ -58,6 +58,9 @@ const customerSchema = new Schema(
     // Teléfonos donde la app de clientes recibe notificaciones push
     // (ExpoPushToken, ver utils/notifications/pushUtils.js).
     pushTokens: { type: [String], default: [] },
+    // Compró sin registrarse (solo dio nombre y apellidos). Su correo es
+    // interno y no puede iniciar sesión; ver guestCustomerController.
+    isGuest: { type: Boolean, default: false },
     // Productos favoritos del menú
     favorites: {
       type: [{ type: Schema.Types.ObjectId, ref: "Products" }],

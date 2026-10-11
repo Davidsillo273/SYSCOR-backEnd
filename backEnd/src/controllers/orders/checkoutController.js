@@ -13,6 +13,7 @@
 import Checkout from "../../models/orders/checkoutModel.js";
 import Order from "../../models/orders/orderModel.js";
 import CustomerModel from "../../models/users/customerModel.js";
+import { SUPPORT } from "../../constants/support.js";
 import Combos from "../../models/menu/combosModel.js";
 import Drinks from "../../models/menu/drinksModel.js";
 import Extras from "../../models/menu/extrasModel.js";
@@ -348,7 +349,7 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
     if (checkout.addToOrder) return appendToOrderFromCheckout(checkout, transaction);
 
     try {
-        const customer = await CustomerModel.findById(checkout.customer).select("personalInfo loginInfo.email");
+        const customer = await CustomerModel.findById(checkout.customer).select("personalInfo loginInfo.email isGuest");
         const fulfillment = checkout.fulfillment || (checkout.isDelivery ? "delivery" : "pickup");
         const dineIn = fulfillment === "dine_in" ? checkout.dineIn : null;
         // Pago al recibir: queda pendiente lo que no cubrió el saldo.
@@ -359,7 +360,8 @@ const createOrderFromCheckout = async (checkoutId, transaction) => {
             contact: {
                 name: customer?.personalInfo?.name || "",
                 lastname: customer?.personalInfo?.lastname || "",
-                email: customer?.loginInfo?.email || "",
+                // Invitado: su correo es interno, no se muestra en el panel.
+                email: customer?.isGuest ? "" : customer?.loginInfo?.email || "",
             },
             isDelivery: checkout.isDelivery,
             fulfillment,
@@ -664,7 +666,7 @@ checkoutController.createCheckout = async (req, res) => {
             return res.status(400).json({ title: "Falta la dirección", message: "Elige a dónde llevamos tu pedido." });
         }
 
-        const customer = await CustomerModel.findById(req.user.id).select("personalInfo loginInfo.email wallet");
+        const customer = await CustomerModel.findById(req.user.id).select("personalInfo loginInfo.email wallet isGuest");
         if (!customer) return res.status(404).json({ title: "Cuenta no encontrada", message: "Vuelve a iniciar sesión." });
 
         // Sin propina: se cobra lo consumido.
@@ -771,7 +773,9 @@ checkoutController.createCheckout = async (req, res) => {
         try {
             wompiResponse = await wompiClient.createTransaction3DS({
             monto: chargeAmount,
-            email: customer.loginInfo?.email,
+            // Un invitado no tiene correo real: Wompi recibe el de la
+            // taquería y no se le manda comprobante a nadie.
+            email: customer.isGuest ? SUPPORT.email : customer.loginInfo?.email,
             nombre: info.name,
             apellido: info.lastname,
             ciudad: "San Salvador",
@@ -784,7 +788,7 @@ checkoutController.createCheckout = async (req, res) => {
             tarjetaCreditoDebido: resolved.wompiCard,
             configuracion: {
                 urlWebhook: `${base}${apiPrefix()}/payments/wompi/webhook`,
-                notificarTransaccionCliente: true,
+                notificarTransaccionCliente: !customer.isGuest,
             },
             datosAdicionales: { checkoutId: String(checkout._id) },
             });
