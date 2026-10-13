@@ -44,6 +44,8 @@ export const allowedOrigins = [
     "http://localhost:5175",
     // Página de la mesa (SYSCOR-tableSystem)
     "http://localhost:5176",
+    // Dominio público de los QR de mesa (SYSCOR-tableSystem)
+    "https://elcorral-mesa.vercel.app",
     ...(process.env.FRONTEND_URL?.split(",").map((url) => url.trim()) || []),
 ];
 

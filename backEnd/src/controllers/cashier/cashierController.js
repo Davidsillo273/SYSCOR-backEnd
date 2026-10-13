@@ -477,6 +477,7 @@ cashierController.getPending = async (req, res) => {
             }).populate("customer", "personalInfo").sort({ updatedAt: 1 }).lean(),
             Order.find({
                 paymentStatus: "paid",
+                table: null,
                 status: { $in: [...KITCHEN_ACTIVE_STATUSES, "ready"] },
                 $or: [
                     { channel: "counter" },

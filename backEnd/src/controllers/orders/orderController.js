@@ -878,13 +878,16 @@ const KITCHEN_ACTIVE_STATUSES = ['pending', 'preparing', 'ready', 'atrasado'];
 // cocina y las ya servidas que aún no se cobran, desde que la mesa se ocupó.
 const belongsToOpenTab = (order, table) => {
   const since = table.status === 'ocupada' && table.occupiedAt ? new Date(table.occupiedAt).getTime() : null;
+  const activityAt = order.channel === 'counter' && order.tableAssignedAt
+    ? new Date(order.tableAssignedAt).getTime()
+    : new Date(order.createdAt).getTime();
   if (KITCHEN_ACTIVE_STATUSES.includes(order.status)) {
-    return since === null || new Date(order.createdAt).getTime() >= since;
+    return since === null || activityAt >= since;
   }
   return order.status === 'delivered'
     && order.paymentStatus === 'pending'
     && since !== null
-    && new Date(order.createdAt).getTime() >= since;
+    && activityAt >= since;
 };
 
 // Tablero del mesero: todas las mesas con los datos de su ocupación y el
@@ -911,8 +914,12 @@ orderController.getWaiterDashboard = async (req, res) => {
       $or: statusFilter,
     })
       .populate(WAITER_POPULATE)
-      .sort({ createdAt: 1 })
       .lean();
+    orders.sort((a, b) => {
+      const aTime = a.channel === 'counter' && a.tableAssignedAt ? a.tableAssignedAt : a.createdAt;
+      const bTime = b.channel === 'counter' && b.tableAssignedAt ? b.tableAssignedAt : b.createdAt;
+      return new Date(aTime) - new Date(bTime);
+    });
 
     const ordersByTable = new Map();
     for (const order of orders) {
@@ -942,6 +949,8 @@ orderController.getWaiterDashboard = async (req, res) => {
           course: order.course || null,
           waiting: !!order.waiting,
           firedAt: order.firedAt || null,
+          tableAssignedAt: order.tableAssignedAt || null,
+          channel: order.channel || null,
           servingBy: order.servingBy?.id ? order.servingBy : null,
           servedBy: order.servedBy?.id ? order.servedBy : null,
           status: order.status,
@@ -970,6 +979,107 @@ orderController.getWaiterDashboard = async (req, res) => {
   } catch (error) {
     console.error("Error en dashboard:", error);
     res.status(500).json({ message: "Error interno del servidor" });
+  }
+};
+
+// Mostrador dine-in orders can be assigned by a waiter after payment. Pickup
+// orders and orders already linked to a table are intentionally excluded.
+orderController.getUnassignedCounterOrders = async (_req, res) => {
+  try {
+    const orders = await Order.find({
+      orderType: 'local',
+      channel: 'counter',
+      fulfillment: 'dine_in',
+      table: null,
+      paymentStatus: 'paid',
+      status: { $in: KITCHEN_ACTIVE_STATUSES },
+    })
+      .select('_id code localCustomerName total status items notes createdAt')
+      .sort({ createdAt: 1 })
+      .lean();
+
+    return res.status(200).json(orders);
+  } catch (error) {
+    console.error("orderController.getUnassignedCounterOrders:", error);
+    return res.status(500).json({ message: "No se pudieron cargar las comandas sin mesa." });
+  }
+};
+
+orderController.assignCounterOrderToTable = async (req, res) => {
+  try {
+    const { tableId } = req.body || {};
+    if (!/^[a-f\d]{24}$/i.test(String(tableId || ''))) {
+      return res.status(400).json({ message: "Selecciona una mesa válida." });
+    }
+
+    const table = await TablesModel.findById(tableId).lean();
+    if (!table) return res.status(404).json({ message: "Mesa no encontrada." });
+    if (table.status === 'reservada') {
+      return res.status(409).json({ message: "No se puede asignar una comanda a una mesa reservada." });
+    }
+
+    const assignedAt = new Date();
+    const order = await Order.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        orderType: 'local',
+        channel: 'counter',
+        fulfillment: 'dine_in',
+        table: null,
+        paymentStatus: 'paid',
+        status: { $in: KITCHEN_ACTIVE_STATUSES },
+      },
+      { $set: { table: table._id, tableAssignedAt: assignedAt, waiter: req.user.id } },
+      { new: true },
+    );
+    if (!order) {
+      return res.status(409).json({ message: "La comanda ya no está disponible para asignar." });
+    }
+
+    let updatedTable = table;
+    if (table.status === 'libre') {
+      updatedTable = await TablesModel.findOneAndUpdate(
+        { _id: table._id, status: 'libre' },
+        {
+          $set: {
+            status: 'ocupada',
+            occupiedAt: assignedAt,
+            ...(order.localCustomerName ? { customerName: order.localCustomerName } : {}),
+          },
+          $unset: { peopleCount: '', billRequestedAt: '', billRequestedBy: '' },
+        },
+        { new: true },
+      );
+
+      // A reservation or another state change may have won after the initial
+      // read. Roll back this order assignment rather than leave it orphaned.
+      if (!updatedTable) {
+        await Order.updateOne(
+          { _id: order._id, table: table._id, waiter: req.user.id, tableAssignedAt: assignedAt },
+          { $unset: { table: '', waiter: '', tableAssignedAt: '' } },
+        );
+        return res.status(409).json({ message: "La mesa cambió de estado. Actualiza y vuelve a intentar." });
+      }
+    } else {
+      updatedTable = await TablesModel.findOne({ _id: table._id, status: 'ocupada' }).lean();
+      if (!updatedTable) {
+        await Order.updateOne(
+          { _id: order._id, table: table._id, waiter: req.user.id, tableAssignedAt: assignedAt },
+          { $unset: { table: '', waiter: '', tableAssignedAt: '' } },
+        );
+        return res.status(409).json({ message: "La mesa cambió de estado. Actualiza y vuelve a intentar." });
+      }
+    }
+
+    const populated = await emitOrder(order._id);
+    emitToRoles(notificationUtils.AUDIENCE_BY_CATEGORY.tables, SOCKET_EVENTS.TABLE_UPDATED, {
+      table: updatedTable.toObject ? updatedTable.toObject() : updatedTable,
+    });
+
+    return res.status(200).json({ message: "Comanda asignada a la mesa.", data: populated });
+  } catch (error) {
+    console.error("orderController.assignCounterOrderToTable:", error);
+    return res.status(500).json({ message: "No se pudo asignar la comanda a la mesa." });
   }
 };
 

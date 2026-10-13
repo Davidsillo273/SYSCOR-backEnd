@@ -58,6 +58,10 @@ const orderSchema = new Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "Tables"
   },
+  // Mostrador dine-in orders get attached to a table after the cashier has
+  // already created and paid for them. This timestamp makes them part of the
+  // table's current open tab without rewriting their original createdAt.
+  tableAssignedAt: { type: Date, default: null },
   waiter: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Employee"

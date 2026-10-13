@@ -391,6 +391,52 @@ router.get('/waiter/dashboard', validateAuthCookie(["employee"]), orderControlle
 
 /**
  * @swagger
+ * /orders/waiter/unassigned-counter:
+ *   get:
+ *     summary: Comandas de caja disponibles para asignar a una mesa
+ *     description: Pedidos pagados de mostrador para consumir en el local, sin mesa y aún activos.
+ *     tags: [Pedidos]
+ *     security:
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de comandas que un mesero puede asignar.
+ */
+router.get('/waiter/unassigned-counter', validateAuthCookie(["employee"]), orderController.getUnassignedCounterOrders);
+
+/**
+ * @swagger
+ * /orders/{id}/assign-table:
+ *   put:
+ *     summary: Asigna a una mesa una comanda de mostrador ya pagada
+ *     description: Solo permite comandas activas de consumo en local que aún no tengan mesa.
+ *     tags: [Pedidos]
+ *     security:
+ *       - cookieAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [tableId]
+ *             properties:
+ *               tableId: { type: string }
+ *     responses:
+ *       200:
+ *         description: Comanda y mesa actualizadas.
+ *       409:
+ *         description: La comanda ya fue asignada o la mesa ya no está disponible.
+ */
+router.put('/:id/assign-table', validateAuthCookie(["employee"]), orderController.assignCounterOrderToTable);
+
+/**
+ * @swagger
  * /orders/table/{tableId}/checkout:
  *   post:
  *     summary: Cobrar la cuenta de una mesa

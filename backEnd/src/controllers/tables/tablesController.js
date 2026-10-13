@@ -214,7 +214,7 @@ tablesController.updateTable = async (req, res) => {
     // Si la mesa pasa a libre, cancelar todas las órdenes activas
     if (status === 'libre' && previousTable.status !== status) {
       await Order.updateMany(
-        { table: tableUpdated._id, status: { $in: ['pending', 'preparing', 'ready'] } },
+        { table: tableUpdated._id, status: { $in: ['pending', 'preparing', 'ready', 'atrasado'] } },
         { $set: { status: 'cancelled' } }
       );
 
@@ -269,7 +269,7 @@ tablesController.bulkUpdateStatus = async (req, res) => {
       const tableIdsChanging = tables.filter((t) => t.status !== status).map((t) => t._id);
       if (tableIdsChanging.length > 0) {
         await Order.updateMany(
-          { table: { $in: tableIdsChanging }, status: { $in: ['pending', 'preparing', 'ready'] } },
+          { table: { $in: tableIdsChanging }, status: { $in: ['pending', 'preparing', 'ready', 'atrasado'] } },
           { $set: { status: 'cancelled' } }
         );
 
