@@ -9,6 +9,7 @@ import { requestKitchenSync } from "./src/utils/orders/kitchenQueueUtils.js";
 import { migrateRetiredEmployeeTypes } from "./src/utils/users/employeeTypeMigration.js";
 import { dispatchDeliveries } from "./src/utils/panchita/dispatchUtils.js";
 import { sweepTableRequests } from "./src/utils/tables/tableRequestUtils.js";
+import { sweepCashierWaiterCalls } from "./src/utils/cashier/cashierWaiterCallUtils.js";
 
 // Render asigna el puerto por variable de entorno y espera que la app escuche
 // ahí; en local seguimos usando el 4000 de siempre.
@@ -51,6 +52,9 @@ async function main() {
     // atendió en 30 s y cierra las de mesas que ya se liberaron. El estado
     // vive en la base, así que un reinicio no pierde ninguna.
     setInterval(() => sweepTableRequests().catch((error) => console.error("sweepTableRequests:", error)), 5 * 1000);
+    // Llamados de caja: si el mesero elegido no responde en 30 s, pasa al
+    // siguiente mesero activo que aún no haya recibido este llamado.
+    setInterval(() => sweepCashierWaiterCalls().catch((error) => console.error("sweepCashierWaiterCalls:", error)), 5 * 1000);
     // Mostramos un mensaje en la consola para confirmar que el servidor está funcionando
     console.log(`Server on port ${PORT}`);
 }

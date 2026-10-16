@@ -14,6 +14,7 @@
 // pagados y entregados, se genera su factura de venta (Invoice) como en
 // cualquier otro cobro, y la caja emite su comprobante con correlativo.
 import Order from "../../models/orders/orderModel.js";
+import mongoose from "mongoose";
 import Invoice from "../../models/orders/invoiceModel.js";
 import TablesModel from "../../models/tables/tablesModel.js";
 import EmployeeModel from "../../models/users/employeeModel.js";
@@ -27,6 +28,11 @@ import CashSession from "../../models/cashier/cashSessionModel.js";
 import CashReceipt from "../../models/cashier/cashReceiptModel.js";
 import settingsUtils from "../../utils/settings/settingsUtils.js";
 import notificationUtils from "../../utils/notifications/notificationUtils.js";
+import {
+    acknowledgeCashierWaiterCall,
+    activeCashierWaiterCallsFor,
+    startCashierWaiterCall,
+} from "../../utils/cashier/cashierWaiterCallUtils.js";
 import { WAITER_POPULATE } from "../../utils/orders/waiterPopulate.js";
 import { orderCode } from "../../utils/orders/orderCodeUtils.js";
 import { targetsForProduct, extraFitsProduct } from "../../utils/extras/extraTargetsUtils.js";
@@ -554,6 +560,60 @@ cashierController.getPending = async (req, res) => {
 };
 
 // GET /cashier/menu — lo que se puede vender en el mostrador, con precios
+// Llama a los meseros para que reciban a personas que quieren comer en el local.
+cashierController.callWaiter = async (req, res) => {
+    try {
+        const session = await requireOpenSession(req, res);
+        if (!session) return undefined;
+
+        const result = await startCashierWaiterCall({
+            deviceId: req.cashierDevice.deviceId,
+            sessionId: session._id,
+        });
+        if (result.error) {
+            return res.status(409).json({
+                title: "No se pudo llamar a un mesero",
+                message: result.error,
+            });
+        }
+
+        return res.status(200).json({
+            message: "Avisamos a un mesero. Si no responde en 30 segundos, intentaremos con otro.",
+            callId: String(result.call._id),
+        });
+    } catch (error) {
+        console.error("cashierController.callWaiter:", error);
+        return res.status(500).json(SERVER_ERROR);
+    }
+};
+
+cashierController.getActiveWaiterCalls = async (req, res) => {
+    try {
+        const calls = await activeCashierWaiterCallsFor(req.user.id);
+        return res.status(200).json({ calls });
+    } catch (error) {
+        console.error("cashierController.getActiveWaiterCalls:", error);
+        return res.status(500).json(SERVER_ERROR);
+    }
+};
+
+cashierController.acknowledgeWaiterCall = async (req, res) => {
+    try {
+        if (!mongoose.isValidObjectId(req.params.id)) {
+            return res.status(404).json({ title: "Llamado no encontrado", message: "Este llamado ya no está disponible." });
+        }
+        const result = await acknowledgeCashierWaiterCall(req.params.id, req.user.id);
+        if (result.error) {
+            const { code, ...body } = result.error;
+            return res.status(code).json(body);
+        }
+        return res.status(200).json({ message: "Aceptaste el llamado de caja." });
+    } catch (error) {
+        console.error("cashierController.acknowledgeWaiterCall:", error);
+        return res.status(500).json(SERVER_ERROR);
+    }
+};
+
 cashierController.getMenu = async (req, res) => {
     try {
         const [saucers, combos, drinks, extras, promotions] = await Promise.all([

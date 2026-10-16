@@ -186,6 +186,22 @@ router.get("/pending", requireCashierDevice("cashier:read"), cashierController.g
 
 /**
  * @swagger
+ * /cashier/call-waiter:
+ *   post:
+ *     summary: Llama a los meseros para recibir personas que quieren comer en el local
+ *     tags: [Caja]
+ *     security:
+ *       - cashierDeviceAuth: []
+ *     responses:
+ *       200: { description: Aviso asignado a un mesero activo, con escalamiento secuencial. }
+ *       409: { description: No hay meseros activos, ya hay un llamado pendiente o el turno está cerrado. }
+ */
+router.post("/call-waiter", requireCashierDevice("cashier:charge"), cashierController.callWaiter);
+router.get("/waiter-calls/active", validateAuthCookie(["employee"]), cashierController.getActiveWaiterCalls);
+router.patch("/waiter-calls/:id/acknowledge", validateAuthCookie(["employee"]), cashierController.acknowledgeWaiterCall);
+
+/**
+ * @swagger
  * /cashier/menu:
  *   get:
  *     summary: Productos con precio para la venta de mostrador

@@ -452,6 +452,7 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
     { new: true }
   ).populate('table', 'number status')
    .populate(WAITER_POPULATE)
+   .populate({ path: 'reservation', select: 'table status reservedFor displayName alias', populate: { path: 'table', select: 'number' } })
    .populate('customer', 'personalInfo');
   if (!order) {
     return { code: 409, body: { title: "Cliente agregando productos", message: "El cliente acaba de empezar a agregar productos a este pedido." } };
@@ -484,7 +485,9 @@ export const applyOrderStatus = async ({ orderId, status, user }) => {
   // aguardar a que salga el aviso.
   if (previousOrder.status !== status) notifyOrderStatus(order, status);
   // Comanda de mesa lista: avisa al mesero que la tomó.
-  if (status === 'ready' && previousOrder.status !== 'ready') notifyWaiterOrderReady(order);
+  if (status === 'ready' && previousOrder.status !== 'ready') {
+    notifyWaiterOrderReady(order)?.catch((error) => console.error("notifyWaiterOrderReady:", error));
+  }
 
   return { code: 200, body: { message: "Order updated", data: order }, order };
 };
@@ -878,9 +881,10 @@ const KITCHEN_ACTIVE_STATUSES = ['pending', 'preparing', 'ready', 'atrasado'];
 // cocina y las ya servidas que aún no se cobran, desde que la mesa se ocupó.
 const belongsToOpenTab = (order, table) => {
   const since = table.status === 'ocupada' && table.occupiedAt ? new Date(table.occupiedAt).getTime() : null;
-  const activityAt = order.channel === 'counter' && order.tableAssignedAt
-    ? new Date(order.tableAssignedAt).getTime()
-    : new Date(order.createdAt).getTime();
+  // QR check-in can happen after a scheduled dine-in order was created.
+  const activityAt = new Date(
+    order.arrivedAt || (order.channel === 'counter' && order.tableAssignedAt) || order.createdAt
+  ).getTime();
   if (KITCHEN_ACTIVE_STATUSES.includes(order.status)) {
     return since === null || activityAt >= since;
   }
@@ -909,11 +913,22 @@ orderController.getWaiterDashboard = async (req, res) => {
     }
 
     const orders = await Order.find({
-      orderType: 'local',
-      table: { $ne: null },
-      $or: statusFilter,
+      $or: [
+        {
+          orderType: 'local',
+          table: { $ne: null },
+          $or: statusFilter,
+        },
+        {
+          orderType: 'online',
+          fulfillment: 'dine_in',
+          reservation: { $ne: null },
+          status: { $in: KITCHEN_ACTIVE_STATUSES },
+        },
+      ],
     })
       .populate(WAITER_POPULATE)
+      .populate({ path: 'reservation', select: 'table status', populate: { path: 'table', select: 'number' } })
       .lean();
     orders.sort((a, b) => {
       const aTime = a.channel === 'counter' && a.tableAssignedAt ? a.tableAssignedAt : a.createdAt;
@@ -923,7 +938,11 @@ orderController.getWaiterDashboard = async (req, res) => {
 
     const ordersByTable = new Map();
     for (const order of orders) {
-      const key = String(order.table);
+      const reservationTable = order.reservation?.table;
+      const reservationIsActive = ['reserved', 'checked_in'].includes(order.reservation?.status);
+      const tableId = order.table || (reservationIsActive ? reservationTable?._id || reservationTable : null);
+      if (!tableId) continue;
+      const key = String(tableId);
       if (!ordersByTable.has(key)) ordersByTable.set(key, []);
       ordersByTable.get(key).push(order);
     }
@@ -951,6 +970,7 @@ orderController.getWaiterDashboard = async (req, res) => {
           firedAt: order.firedAt || null,
           tableAssignedAt: order.tableAssignedAt || null,
           channel: order.channel || null,
+          fulfillment: order.fulfillment || null,
           servingBy: order.servingBy?.id ? order.servingBy : null,
           servedBy: order.servedBy?.id ? order.servedBy : null,
           status: order.status,
@@ -966,7 +986,7 @@ orderController.getWaiterDashboard = async (req, res) => {
             notes: item.notes || '',
           })),
           notes: order.notes || '',
-          customerName: order.localCustomerName || null,
+          customerName: order.localCustomerName || order.reservation?.displayName || null,
           waiter: order.waiter
             ? `${order.waiter.name || ''} ${order.waiter.lastname || ''}`.trim()
             : null,

@@ -60,6 +60,8 @@ export const SOCKET_EVENTS = {
     // A los meseros: se creó, escaló, tomó o cerró una solicitud de mesa
     // (pedir la cuenta / llamar al mesero). Ver utils/tables/tableRequestUtils.js
     TABLE_REQUEST_CHANGED: "table_request:changed",
+    // Llamado de caja asignado a un mesero: creado, reasignado o aceptado.
+    CASHIER_WAITER_CALL_CHANGED: "cashier:waiter_call_changed",
     // Captura del DUI desde el celular: la PC está esperando a que las
     // fotos lleguen del teléfono que escaneó el QR (ver duiScanController).
     DUI_CAPTURE_UPLOADED: "dui:capture_uploaded",
